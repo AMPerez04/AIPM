@@ -83,3 +83,6 @@ See `packages/shared/src/types.ts` for:
 - **Database**: SQLite + Prisma
 - **Type Safety**: TypeScript + Zod
 
+## Opt-in Messaging
+
+On account creation, the users have the opportunity to opt-in to receiving event scheduling notifications via twilio. The users consent status will be stored, with an option to change consent status in user settings. 
