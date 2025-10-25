@@ -45,6 +45,22 @@ The API will be available at `http://localhost:3001`
 - `POST /vendors` - Create a new vendor
 - `POST /vendors/:id/ping` - Contact vendor for a ticket
 
+### Tenants
+- `GET /tenants` - List all tenants
+- `POST /tenants` - Create a new tenant
+- `GET /tenants/:id` - Get tenant details
+- `POST /tenants-with-property` - Create tenant and property together
+- `POST /tenants/bulk` - Create multiple tenants
+
+### Properties
+- `GET /properties` - List all properties
+- `POST /properties` - Create a new property
+- `GET /properties/:id` - Get property details
+
+### Landlords
+- `GET /landlords` - List all landlords
+- `GET /landlords/:id` - Get landlord details
+
 ### Appointments
 - `POST /appointments` - Create or update appointment
 

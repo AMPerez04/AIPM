@@ -17,6 +17,11 @@ import {
   IntakeCompletedEventSchema,
   VendorConfirmedEventSchema,
   AppointmentConfirmedEventSchema,
+  TenantSchema,
+  CreateTenantSchema,
+  PropertySchema,
+  CreatePropertySchema,
+  LandlordSchema,
 } from './schemas.js';
 import {
   type Ticket, type Vendor, type Appointment, type Event,
@@ -119,8 +124,37 @@ async function findOrCreateTenant(name: string, phone: string, propertyId: strin
   }
 }
 
+// Helper function to find or create landlord by email
+async function findOrCreateLandlord(email: string, name?: string, phone?: string) {
+  try {
+    // Try to find existing landlord by email
+    let landlord = await prisma.landlord.findFirst({
+      where: { email },
+    });
+
+    if (!landlord) {
+      // Create new landlord
+      landlord = await prisma.landlord.create({
+        data: {
+          name: name || 'John Smith',
+          email,
+          phone: phone || '+1234567890',
+        },
+      });
+      console.log('✅ Created new landlord:', landlord.id);
+    } else {
+      console.log('✅ Found existing landlord:', landlord.id);
+    }
+
+    return landlord;
+  } catch (error) {
+    console.error('Error finding/creating landlord:', error);
+    throw error;
+  }
+}
+
 // Helper function to find or create property by address
-async function findOrCreateProperty(address: string, unit?: string) {
+async function findOrCreateProperty(address: string, unit?: string, landlordEmail?: string) {
   try {
     // Try to find existing property by address
     let property = await prisma.property.findFirst({
@@ -131,19 +165,19 @@ async function findOrCreateProperty(address: string, unit?: string) {
     });
 
     if (!property) {
-      // Get a default landlord (you might want to handle this differently)
-      const defaultLandlord = await prisma.landlord.findFirst();
-      
-      if (!defaultLandlord) {
-        throw new Error('No landlord found in database');
-      }
+      // Get landlord - use provided email or default
+      const landlord = await findOrCreateLandlord(
+        landlordEmail || 'john.smith@example.com',
+        'John Smith',
+        '+1234567890'
+      );
 
       // Create new property
       property = await prisma.property.create({
         data: {
           address,
           unit: unit || null,
-          landlordId: defaultLandlord.id,
+          landlordId: landlord.id,
         },
       });
       console.log('✅ Created new property:', property.id);
@@ -1069,6 +1103,394 @@ app.post('/vendors/:id/ping', async (req, res) => {
   } catch (error) {
     console.error('Error pinging vendor:', error);
     res.status(500).json({ error: 'Failed to ping vendor' });
+  }
+});
+
+// ============================================================================
+// TENANT ENDPOINTS
+// ============================================================================
+
+// GET /tenants - List all tenants
+app.get('/tenants', async (req, res) => {
+  try {
+    const tenants = await prisma.tenant.findMany({
+      include: {
+        property: {
+          include: {
+            landlord: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(tenants);
+  } catch (error) {
+    console.error('Error fetching tenants:', error);
+    res.status(500).json({ error: 'Failed to fetch tenants' });
+  }
+});
+
+// POST /tenants - Create a new tenant
+app.post('/tenants', async (req, res) => {
+  try {
+    const data = CreateTenantSchema.parse(req.body);
+
+    // Check if property exists
+    const property = await prisma.property.findUnique({
+      where: { id: data.propertyId },
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Property not found' });
+    }
+
+    // Create the tenant
+    const tenant = await prisma.tenant.create({
+      data,
+      include: {
+        property: {
+          include: {
+            landlord: true,
+          },
+        },
+      },
+    });
+
+    res.status(201).json({
+      id: tenant.id,
+      message: 'Tenant created successfully',
+      tenant,
+    });
+  } catch (error) {
+    console.error('Error creating tenant:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to create tenant' });
+    }
+  }
+});
+
+// GET /tenants/:id - Get tenant details
+app.get('/tenants/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        property: {
+          include: {
+            landlord: true,
+          },
+        },
+        tickets: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    res.json(tenant);
+  } catch (error) {
+    console.error('Error fetching tenant:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant' });
+  }
+});
+
+// POST /tenants-with-property - Create tenant and property together
+app.post('/tenants-with-property', async (req, res) => {
+  try {
+    const createTenantWithPropertySchema = z.object({
+      firstName: z.string().min(1, 'First name is required'),
+      lastName: z.string().min(1, 'Last name is required'),
+      phone: z.string().min(1, 'Phone number is required'),
+      email: z.string().email().optional(),
+      propertyAddress: z.string().min(1, 'Property address is required'),
+      propertyUnit: z.string().optional(),
+      landlordEmail: z.string().email().default('john.smith@example.com'),
+    });
+
+    const data = createTenantWithPropertySchema.parse(req.body);
+
+    // Find or create property
+    const property = await findOrCreateProperty(
+      data.propertyAddress,
+      data.propertyUnit,
+      data.landlordEmail
+    );
+
+    // Create tenant
+    const tenant = await prisma.tenant.create({
+      data: {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone,
+        email: data.email,
+        propertyId: property.id,
+      },
+      include: {
+        property: {
+          include: {
+            landlord: true,
+          },
+        },
+      },
+    });
+
+    res.status(201).json({
+      id: tenant.id,
+      message: 'Tenant and property created successfully',
+      tenant,
+      property,
+    });
+  } catch (error) {
+    console.error('Error creating tenant with property:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to create tenant with property' });
+    }
+  }
+});
+
+// POST /tenants/bulk - Create multiple tenants
+app.post('/tenants/bulk', async (req, res) => {
+  try {
+    const bulkCreateSchema = z.object({
+      tenants: z.array(z.object({
+        firstName: z.string().min(1, 'First name is required'),
+        lastName: z.string().min(1, 'Last name is required'),
+        phone: z.string().min(1, 'Phone number is required'),
+        email: z.string().email().optional(),
+        propertyAddress: z.string().min(1, 'Property address is required'),
+        propertyUnit: z.string().optional(),
+      })),
+      landlordEmail: z.string().email().default('john.smith@example.com'),
+    });
+
+    const { tenants, landlordEmail } = bulkCreateSchema.parse(req.body);
+
+    const results = [];
+
+    for (const tenantData of tenants) {
+      try {
+        // Find or create property
+        const property = await findOrCreateProperty(
+          tenantData.propertyAddress,
+          tenantData.propertyUnit,
+          landlordEmail
+        );
+
+        // Create tenant
+        const tenant = await prisma.tenant.create({
+          data: {
+            firstName: tenantData.firstName,
+            lastName: tenantData.lastName,
+            phone: tenantData.phone,
+            email: tenantData.email,
+            propertyId: property.id,
+          },
+          include: {
+            property: {
+              include: {
+                landlord: true,
+              },
+            },
+          },
+        });
+
+        results.push({
+          success: true,
+          tenant,
+          property,
+        });
+      } catch (error) {
+        results.push({
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          tenantData,
+        });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failureCount = results.filter(r => !r.success).length;
+
+    res.status(201).json({
+      message: `Bulk creation completed: ${successCount} successful, ${failureCount} failed`,
+      results,
+      summary: {
+        total: tenants.length,
+        successful: successCount,
+        failed: failureCount,
+      },
+    });
+  } catch (error) {
+    console.error('Error bulk creating tenants:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to bulk create tenants' });
+    }
+  }
+});
+
+// ============================================================================
+// PROPERTY ENDPOINTS
+// ============================================================================
+
+// GET /properties - List all properties
+app.get('/properties', async (req, res) => {
+  try {
+    const properties = await prisma.property.findMany({
+      include: {
+        landlord: true,
+        tenants: true,
+        tickets: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(properties);
+  } catch (error) {
+    console.error('Error fetching properties:', error);
+    res.status(500).json({ error: 'Failed to fetch properties' });
+  }
+});
+
+// POST /properties - Create a new property
+app.post('/properties', async (req, res) => {
+  try {
+    const data = CreatePropertySchema.parse(req.body);
+
+    // Check if landlord exists
+    const landlord = await prisma.landlord.findUnique({
+      where: { id: data.landlordId },
+    });
+
+    if (!landlord) {
+      return res.status(404).json({ error: 'Landlord not found' });
+    }
+
+    // Create the property
+    const property = await prisma.property.create({
+      data,
+      include: {
+        landlord: true,
+        tenants: true,
+      },
+    });
+
+    res.status(201).json({
+      id: property.id,
+      message: 'Property created successfully',
+      property,
+    });
+  } catch (error) {
+    console.error('Error creating property:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to create property' });
+    }
+  }
+});
+
+// GET /properties/:id - Get property details
+app.get('/properties/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const property = await prisma.property.findUnique({
+      where: { id },
+      include: {
+        landlord: true,
+        tenants: {
+          include: {
+            tickets: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+        tickets: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Property not found' });
+    }
+
+    res.json(property);
+  } catch (error) {
+    console.error('Error fetching property:', error);
+    res.status(500).json({ error: 'Failed to fetch property' });
+  }
+});
+
+// ============================================================================
+// LANDLORD ENDPOINTS
+// ============================================================================
+
+// GET /landlords - List all landlords
+app.get('/landlords', async (req, res) => {
+  try {
+    const landlords = await prisma.landlord.findMany({
+      include: {
+        properties: {
+          include: {
+            tenants: true,
+            tickets: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(landlords);
+  } catch (error) {
+    console.error('Error fetching landlords:', error);
+    res.status(500).json({ error: 'Failed to fetch landlords' });
+  }
+});
+
+// GET /landlords/:id - Get landlord details
+app.get('/landlords/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const landlord = await prisma.landlord.findUnique({
+      where: { id },
+      include: {
+        properties: {
+          include: {
+            tenants: true,
+            tickets: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+      },
+    });
+
+    if (!landlord) {
+      return res.status(404).json({ error: 'Landlord not found' });
+    }
+
+    res.json(landlord);
+  } catch (error) {
+    console.error('Error fetching landlord:', error);
+    res.status(500).json({ error: 'Failed to fetch landlord' });
   }
 });
 

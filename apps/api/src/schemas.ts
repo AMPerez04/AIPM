@@ -72,6 +72,49 @@ export const AppointmentConfirmedEventSchema = z.object({
   }),
 });
 
+// Tenant schemas
+export const TenantSchema = z.object({
+  id: z.string(),
+  firstName: z.string(),
+  lastName: z.string(),
+  phone: z.string(),
+  email: z.string().optional(),
+  propertyId: z.string(),
+  createdAt: z.string(),
+});
+
+export const CreateTenantSchema = z.object({
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
+  phone: z.string().min(1, 'Phone number is required'),
+  email: z.string().email().optional(),
+  propertyId: z.string().min(1, 'Property ID is required'),
+});
+
+// Property schemas
+export const PropertySchema = z.object({
+  id: z.string(),
+  address: z.string(),
+  unit: z.string().optional(),
+  landlordId: z.string(),
+  createdAt: z.string(),
+});
+
+export const CreatePropertySchema = z.object({
+  address: z.string().min(1, 'Address is required'),
+  unit: z.string().optional(),
+  landlordId: z.string().min(1, 'Landlord ID is required'),
+});
+
+// Landlord schemas
+export const LandlordSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  phone: z.string(),
+  createdAt: z.string(),
+});
+
 export const EventSchema = z.discriminatedUnion('type', [
   IntakeCompletedEventSchema,
   VendorConfirmedEventSchema,
