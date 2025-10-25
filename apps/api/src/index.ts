@@ -251,25 +251,13 @@ async function escalateTicket(ticket: any) {
       escalatedAt: new Date().toISOString(),
     });
 
-    // Notify landlord
-    if (ticket.property.landlord) {
-      const landlordMessage = `🚨 URGENT: Maintenance ticket #${ticket.id} for ${ticket.property.address} has been escalated. Issue: ${ticket.description}. Please contact tenant ${ticket.tenant.firstName} ${ticket.tenant.lastName} at ${ticket.tenant.phone}.`;
-      
-      try {
-        await twilioClient.messages.create({
-          body: landlordMessage,
-          from: process.env.TWILIO_PHONE_NUMBER,
-          to: ticket.property.landlord.phone,
-        });
-        
-        await logAudit(ticket.id, 'landlord_notified', {
-          landlordId: ticket.property.landlord.id,
-          method: 'sms',
-        });
-      } catch (smsError) {
-        console.error('Failed to notify landlord:', smsError);
-      }
-    }
+    // Notify landlord (commented out - SMS not allowed from Twilio)
+    // if (ticket.property.landlord) {
+    //   const landlordMessage = `🚨 URGENT: Maintenance ticket #${ticket.id} for ${ticket.property.address} has been escalated. Issue: ${ticket.description}. Please contact tenant ${ticket.tenant.firstName} ${ticket.tenant.lastName} at ${ticket.tenant.phone}.`;
+    //   
+    //   // Would need to use outbound call or alternative notification method
+    //   console.log(`Landlord notification suppressed: ${ticket.property.landlord.phone}`);
+    // }
 
     // Try to contact emergency vendors if it's an emergency
     if (ticket.severity === 'emergency') {
@@ -296,27 +284,122 @@ async function contactEmergencyVendors(ticket: any) {
     for (const vendor of emergencyVendors.slice(0, 3)) { // Contact top 3 emergency vendors
       const vendorPhones = JSON.parse(vendor.phones);
       if (vendorPhones.length > 0) {
-        const emergencyMessage = `🚨 EMERGENCY JOB: ${ticket.category} issue at ${ticket.property.address}. Tenant: ${ticket.tenant.firstName} ${ticket.tenant.lastName} (${ticket.tenant.phone}). Available now? Reply 'YES EMERGENCY' to accept.`;
-        
         try {
-          await twilioClient.messages.create({
-            body: emergencyMessage,
-            from: process.env.TWILIO_PHONE_NUMBER,
+          // Build URL with ticket info as query params
+          const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
+          url.searchParams.set('ticketId', ticket.id);
+          url.searchParams.set('category', ticket.category);
+          url.searchParams.set('description', ticket.description);
+          url.searchParams.set('address', ticket.property.address);
+          url.searchParams.set('unit', ticket.property.unit || '');
+          url.searchParams.set('window', 'EMERGENCY - Available now?');
+          
+          const call = await twilioClient.calls.create({
             to: vendorPhones[0],
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            url: url.toString(),
+            method: 'POST',
+            statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+            statusCallbackMethod: 'POST',
           });
           
           await logAudit(ticket.id, 'emergency_vendor_contacted', {
             vendorId: vendor.id,
             vendorName: vendor.name,
-            method: 'sms',
+            method: 'call',
+            callSid: call.sid,
           });
-        } catch (smsError) {
-          console.error(`Failed to contact emergency vendor ${vendor.name}:`, smsError);
+          
+          console.log(`✅ Emergency call initiated to ${vendor.name}: ${call.sid}`);
+        } catch (callError) {
+          console.error(`Failed to contact emergency vendor ${vendor.name}:`, callError);
         }
       }
     }
   } catch (error) {
     console.error('Error contacting emergency vendors:', error);
+  }
+}
+
+// Helper function to initiate outbound call to vendor
+async function initiateVendorCall(ticketId: string) {
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        tenant: true,
+        property: true,
+      },
+    });
+
+    if (!ticket) {
+      console.error(`Ticket ${ticketId} not found`);
+      return;
+    }
+
+    // Find vendors that handle this category, ordered by priority
+    const vendors = await prisma.vendor.findMany({
+      where: {
+        specialties: {
+          contains: ticket.category,
+        },
+      },
+      orderBy: { priority: 'asc' },
+    });
+
+    if (vendors.length === 0) {
+      console.error(`No vendors found for category: ${ticket.category}`);
+      await logAudit(ticketId, 'no_vendors_found', { category: ticket.category });
+      return;
+    }
+
+    // Get the best priority vendor (first in list)
+    const bestVendor = vendors[0];
+    const vendorPhones = JSON.parse(bestVendor.phones);
+    
+    if (vendorPhones.length === 0) {
+      console.error(`Vendor ${bestVendor.name} has no phone numbers`);
+      return;
+    }
+
+    // Update ticket status
+    await prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: 'vendor_contacting' },
+    });
+
+    // Make outbound call to vendor
+    console.log(`📞 Initiating call to vendor ${bestVendor.name} at ${vendorPhones[0]} for ticket ${ticketId}`);
+    
+    // Build URL with ticket info as query params
+    const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
+    url.searchParams.set('ticketId', ticketId);
+    url.searchParams.set('category', ticket.category);
+    url.searchParams.set('description', ticket.description);
+    url.searchParams.set('address', ticket.property.address);
+    url.searchParams.set('unit', ticket.property.unit || '');
+    url.searchParams.set('window', ticket.window);
+    
+    const call = await twilioClient.calls.create({
+      to: vendorPhones[0],
+      from: process.env.TWILIO_PHONE_NUMBER!,
+      url: url.toString(),
+      method: 'POST',
+      statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+      statusCallbackMethod: 'POST',
+    });
+
+    // Log audit
+    await logAudit(ticketId, 'vendor_call_initiated', {
+      vendorId: bestVendor.id,
+      vendorName: bestVendor.name,
+      callSid: call.sid,
+      vendorPhone: vendorPhones[0],
+    });
+
+    console.log(`✅ Call initiated to vendor: ${call.sid}`);
+  } catch (error) {
+    console.error('Error initiating vendor call:', error);
   }
 }
 
@@ -361,23 +444,37 @@ async function processVendorSelection(ticketId: string) {
     // Contact vendors in priority order
     for (const vendor of vendors.slice(0, 3)) { // Contact top 3 vendors
       const vendorPhones = JSON.parse(vendor.phones);
+      console.log('vendorPhones', vendorPhones);
       if (vendorPhones.length > 0) {
-        const message = `Job for ${ticket.property.address} (Unit ${ticket.property.unit || 'N/A'}): ${ticket.category} issue - ${ticket.description}. Available ${ticket.window}? Reply 'YES 3pm' to book.`;
-        
         try {
-          await twilioClient.messages.create({
-            body: message,
-            from: process.env.TWILIO_PHONE_NUMBER,
+          // Build URL with ticket info as query params
+          const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
+          url.searchParams.set('ticketId', ticket.id);
+          url.searchParams.set('category', ticket.category);
+          url.searchParams.set('description', ticket.description);
+          url.searchParams.set('address', ticket.property.address);
+          url.searchParams.set('unit', ticket.property.unit || '');
+          url.searchParams.set('window', ticket.window);
+          
+          const call = await twilioClient.calls.create({
             to: vendorPhones[0],
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            url: url.toString(),
+            method: 'POST',
+            statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+            statusCallbackMethod: 'POST',
           });
           
           await logAudit(ticketId, 'vendor_contacted', {
             vendorId: vendor.id,
             vendorName: vendor.name,
-            method: 'sms',
+            method: 'call',
+            callSid: call.sid,
           });
-        } catch (smsError) {
-          console.error(`Failed to contact vendor ${vendor.name}:`, smsError);
+          
+          console.log(`✅ Call initiated to ${vendor.name}: ${call.sid}`);
+        } catch (callError) {
+          console.error(`Failed to contact vendor ${vendor.name}:`, callError);
         }
       }
     }
@@ -481,14 +578,18 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               type: 'audio/pcmu'
             },
             turn_detection: {
-              type: 'server_vad'
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 200,
+              create_response: true
             }
           },
           output: {
             format: {
               type: 'audio/pcmu'
             },
-            voice: 'alloy'
+            voice: 'marin'
           }
         },
         tools: [{
@@ -702,7 +803,8 @@ IMPORTANT:
 - Ask for the tenant's name, phone number, property address, and unit number first.
 - Then ask about the issue, determine severity, and get their preferred time window.
 - When you have all required information (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call the create_ticket tool.
-- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.`,
+- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.
+- Do not repeat anything except the most important information, but only once. `,
             },
           }));
         }
@@ -1069,36 +1171,45 @@ app.post('/vendors/:id/ping', async (req, res) => {
       });
     }
 
-    // Create message content
-    const message = `Job for ${ticket.property.address} (Unit ${ticket.property.unit || 'N/A'}): ${ticket.category} issue - ${ticket.description}. Available ${ticket.window}? Reply 'YES 3pm' to book.`;
-
-    // Send SMS to vendor
-    if (method === 'sms' && vendorPhones.length > 0) {
+    // Make outbound call to vendor
+    if (vendorPhones.length > 0) {
       try {
-        const smsResponse = await twilioClient.messages.create({
-          body: message,
-          from: process.env.TWILIO_PHONE_NUMBER,
-          to: vendorPhones[0], // Use first phone number
+        // Build URL with ticket info as query params
+        const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
+        url.searchParams.set('ticketId', ticket.id);
+        url.searchParams.set('category', ticket.category);
+        url.searchParams.set('description', ticket.description);
+        url.searchParams.set('address', ticket.property.address);
+        url.searchParams.set('unit', ticket.property.unit || '');
+        url.searchParams.set('window', ticket.window);
+        
+        const call = await twilioClient.calls.create({
+          to: vendorPhones[0],
+          from: process.env.TWILIO_PHONE_NUMBER!,
+          url: url.toString(),
+          method: 'POST',
+          statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+          statusCallbackMethod: 'POST',
         });
 
         // Log audit
         await logAudit(ticketId, 'vendor_pinged', {
           vendorId,
-          method: 'sms',
-          messageSid: smsResponse.sid,
+          method: 'call',
+          callSid: call.sid,
         });
 
         res.json({
           success: true,
-          message: 'Vendor pinged successfully',
-          smsSid: smsResponse.sid,
+          message: 'Vendor called successfully',
+          callSid: call.sid,
         });
-      } catch (smsError) {
-        console.error('SMS sending failed:', smsError);
-        res.status(500).json({ error: 'Failed to send SMS to vendor' });
+      } catch (callError) {
+        console.error('Call failed:', callError);
+        res.status(500).json({ error: 'Failed to call vendor' });
       }
     } else {
-      res.status(400).json({ error: 'Invalid method or no phone numbers available' });
+      res.status(400).json({ error: 'No phone numbers available for vendor' });
     }
   } catch (error) {
     console.error('Error pinging vendor:', error);
@@ -1575,7 +1686,7 @@ app.post('/appointments', async (req, res) => {
 // NOTIFICATION ENDPOINTS
 // ============================================================================
 
-// POST /notify - Send notification (SMS)
+// POST /notify - Send notification via phone call (SMS disabled)
 app.post('/notify', async (req, res) => {
   try {
     const notifySchema = z.object({
@@ -1586,21 +1697,18 @@ app.post('/notify', async (req, res) => {
 
     const { to, message, type } = notifySchema.parse(req.body);
 
-    // Send SMS
-    const smsResponse = await twilioClient.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: to,
-    });
-
-    res.json({
-      success: true,
-      message: 'Notification sent successfully',
-      smsSid: smsResponse.sid,
+    // SMS disabled - return error
+    res.status(400).json({ 
+      error: 'SMS notifications not supported. Use outbound calls instead.',
+      suggestion: 'Use initiateVendorCall function for vendor notifications'
     });
   } catch (error) {
-    console.error('Error sending notification:', error);
-    res.status(500).json({ error: 'Failed to send notification' });
+    console.error('Error with notification request:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to process notification request' });
+    }
   }
 });
 
@@ -1608,31 +1716,22 @@ app.post('/notify', async (req, res) => {
 // WEBHOOK ENDPOINTS
 // ============================================================================
 
-// POST /webhooks/sms - Handle incoming SMS
+// POST /webhooks/sms - Handle incoming SMS (disabled - SMS not allowed from Twilio)
+// This endpoint is kept for compatibility but SMS is disabled
 app.post('/webhooks/sms', async (req, res) => {
   try {
     const { From, Body, MessageSid } = req.body;
 
-    console.log(`📱 SMS received from ${From}: ${Body}`);
-
-    // Parse vendor confirmation (e.g., "YES 3pm")
-    const yesMatch = Body.match(/YES\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+    console.log(`📱 SMS received from ${From} (SMS disabled, webhook kept for compatibility): ${Body}`);
     
-    if (yesMatch) {
-      const timeStr = yesMatch[1];
-      console.log(`✅ Vendor confirmed for time: ${timeStr}`);
-      
-      // TODO: Find pending ticket for this vendor and create appointment
-      // This would require tracking which vendor was pinged for which ticket
-      
-      res.json({ message: 'Confirmation received' });
-    } else {
-      console.log('❓ Unknown SMS format');
-      res.json({ message: 'SMS received but not recognized' });
-    }
+    // Return 200 to acknowledge receipt but do not process
+    res.json({ 
+      message: 'SMS webhook received but SMS processing is disabled',
+      note: 'All notifications now use outbound calls'
+    });
   } catch (error) {
     console.error('Error processing SMS webhook:', error);
-    res.status(500).json({ error: 'Failed to process SMS' });
+    res.status(500).json({ error: 'Failed to process SMS webhook' });
   }
 });
 
@@ -1732,20 +1831,169 @@ app.get('/metrics', async (req, res) => {
 app.post('/webhooks/call', (req, res) => {
   const vr = new twilio.twiml.VoiceResponse();
   const connect = vr.connect();
+  
   // IMPORTANT: use wss and your Render URL below
   connect.stream({
     url: 'wss://aipm-c713.onrender.com/ws/twilio-media',
-    // Optional: pass metadata you want to see on connect
     track: 'inbound_track' // default audio track
   });
+  
   res.type('text/xml').send(vr.toString());
 });
 
 
+// POST /webhooks/vendor-call - Handles Twilio callback when vendor answers
+app.post('/webhooks/vendor-call', (req, res) => {
+  // Get ticket info from request params (passed when creating the call)
+  const { ticketId, category, description, address, unit, window } = req.query;
+  
+  const vr = new twilio.twiml.VoiceResponse();
+  
+  // Speak to vendor about the job
+  const greeting = `Hello, this is Relay PM. We have a ${category} job for ${address}`;
+  if (unit) {
+    vr.say(greeting + `, unit ${unit}.`);
+  } else {
+    vr.say(greeting + '.');
+  }
+  
+  vr.say(`The issue is: ${description}. The tenant requested ${window}. Can you confirm availability?`);
+  vr.pause({ length: 5 });
+  vr.say('Thank you. Press 1 to accept this appointment. Press 2 to decline.');
+  
+  // Use <Gather> to capture vendor's response
+  const gather = vr.gather({
+    numDigits: 1,
+    action: `${process.env.BASE_URL}/webhooks/vendor-response?ticketId=${ticketId}`,
+    method: 'POST',
+  });
+  
+  gather.say('Please press 1 to accept or 2 to decline.');
+  
+  // If no response, say goodbye
+  vr.say('Thank you for your response. Goodbye.');
+  vr.hangup();
+  
+  res.type('text/xml').send(vr.toString());
+});
+
+// POST /webhooks/vendor-response - Handles vendor's keypress response
+app.post('/webhooks/vendor-response', async (req, res) => {
+  const { ticketId } = req.query;
+  const { Digits } = req.body;
+  
+  const vr = new twilio.twiml.VoiceResponse();
+  
+  if (!ticketId) {
+    vr.say('Error: no ticket ID provided. Goodbye.');
+    res.type('text/xml').send(vr.toString());
+    return;
+  }
+  
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId as string },
+      include: {
+        tenant: true,
+        property: true,
+      },
+    });
+    
+    if (!ticket) {
+      vr.say('Ticket not found. Goodbye.');
+      res.type('text/xml').send(vr.toString());
+      return;
+    }
+    
+    if (Digits === '1') {
+      // Vendor accepted
+      vr.say('Thank you for accepting. You should receive an SMS with the appointment details shortly.');
+      
+      // Update ticket status
+      await prisma.ticket.update({
+        where: { id: ticketId as string },
+        data: { status: 'scheduled' },
+      });
+      
+      // Log acceptance
+      await logAudit(ticketId as string, 'vendor_accepted_via_call', {
+        digits: Digits,
+      });
+      
+      console.log(`✅ Vendor accepted appointment for ticket ${ticketId}`);
+    } else if (Digits === '2') {
+      // Vendor declined
+      vr.say('Thank you for letting us know. We will contact another vendor. Goodbye.');
+      
+      // Log decline
+      await logAudit(ticketId as string, 'vendor_declined_via_call', {
+        digits: Digits,
+      });
+      
+      // TODO: Try next vendor in priority order
+      console.log(`❌ Vendor declined for ticket ${ticketId}`);
+    } else {
+      vr.say('Invalid response. Goodbye.');
+    }
+  } catch (error) {
+    console.error('Error handling vendor response:', error);
+    vr.say('An error occurred. Goodbye.');
+  }
+  
+  res.type('text/xml').send(vr.toString());
+});
+
 // --- Voice: status callback to track call lifecycle ---
 app.post('/webhooks/call-status', async (req, res) => {
   // Twilio sends events like queued, ringing, in-progress, completed
-  const { CallSid, CallStatus, From, To, Timestamp } = req.body;
+  const { CallSid, CallStatus, From, To, Timestamp, Direction } = req.body;
+  
+  console.log('📞 Call status update:', {
+    CallSid,
+    CallStatus,
+    From,
+    To,
+    Timestamp,
+    Direction
+  });
+
+  // When inbound call completes, find the most recent ticket for this caller and trigger vendor selection
+  // Only process inbound calls (Direction === 'inbound') to avoid processing vendor outbound calls
+  if (CallStatus === 'completed' && From && Direction === 'inbound') {
+    console.log('📥 Processing inbound call completion - tenant call ended');
+    try {
+      // Find the most recent ticket created for this phone number
+      const tenant = await prisma.tenant.findFirst({
+        where: { phone: From },
+        include: {
+          tickets: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      if (tenant && tenant.tickets.length > 0) {
+        const mostRecentTicket = tenant.tickets[0];
+        console.log(`📋 Found most recent ticket: ${mostRecentTicket.id}, status: ${mostRecentTicket.status}`);
+        
+        // Only trigger if ticket is in 'new' status
+        if (mostRecentTicket.status === 'new') {
+          console.log(`🎯 Triggering vendor selection for ticket ${mostRecentTicket.id}`);
+          
+          // Find best priority vendor and make an outbound call
+          await initiateVendorCall(mostRecentTicket.id);
+        } else {
+          console.log(`⏭️ Skipping vendor call - ticket ${mostRecentTicket.id} already in status: ${mostRecentTicket.status}`);
+        }
+      } else {
+        console.log(`⚠️ No tickets found for tenant calling from ${From}`);
+      }
+    } catch (error) {
+      console.error('❌ Error processing call completion:', error);
+    }
+  }
+  
   res.sendStatus(204);
 });
 
