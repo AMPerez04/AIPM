@@ -984,6 +984,17 @@ app.post('/vendors', async (req, res) => {
   }
 });
 
+app.delete('/vendors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.vendor.delete({ where: { id } });
+    res.json({ message: 'Vendor deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting vendor:', error);
+    res.status(500).json({ error: 'Failed to delete vendor' });
+  }
+});
+
 // POST /vendors/:id/ping - Contact vendor for a ticket
 app.post('/vendors/:id/ping', async (req, res) => {
   try {
