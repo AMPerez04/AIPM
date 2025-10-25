@@ -61,7 +61,7 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div className="bg-white rounded-lg p-6">
-          <p className="text-gray-600">Loading ticket details...</p>
+          <p className="text-gray-800">Loading ticket details...</p>
         </div>
       </div>
     );
@@ -71,10 +71,10 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6 border-b flex items-center justify-between">
-          <h2 className="text-2xl font-semibold">Ticket Details</h2>
+          <h2 className="text-2xl font-semibold text-gray-900 ">Ticket Details</h2>
           <button
             onClick={onClose}
-            className="text-gray-600 hover:text-gray-900"
+            className="text-gray-800 hover:text-gray-900"
           >
             ✕
           </button>
@@ -84,30 +84,30 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
           {ticket && (
             <>
               <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-4">Information</h3>
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm text-gray-600">ID</p>
-                    <p className="font-medium">{ticket.id}</p>
+                    <p className="text-sm text-gray-800">ID</p>
+                    <p className="font-medium text-gray-900">{ticket.id}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600">Category</p>
-                    <p className="font-medium">{ticket.category}</p>
+                    <p className="text-sm text-gray-800">Category</p>
+                    <p className="font-medium text-gray-900">{ticket.category}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600">Severity</p>
-                    <p className="font-medium">{ticket.severity}</p>
+                    <p className="text-sm text-gray-800">Severity</p>
+                    <p className="font-medium text-gray-900">{ticket.severity}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600">Status</p>
-                    <p className="font-medium">{ticket.status}</p>
+                    <p className="text-sm text-gray-800">Status</p>
+                    <p className="font-medium text-gray-900">{ticket.status}</p>
                   </div>
                 </div>
               </div>
 
               <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-2">Description</h3>
-                <p className="text-gray-700">{ticket.description}</p>
+                <h3 className="text-lg font-semibold mb-2 text-gray-900">Description</h3>
+                <p className="text-gray-900">{ticket.description}</p>
               </div>
 
               {/* TODO: Add appointment details if scheduled */}
@@ -115,7 +115,7 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
               {/* TODO: Add transcript display */}
 
               <div>
-                <h3 className="text-lg font-semibold mb-4">Timeline</h3>
+                <h3 className="text-lg font-semibold mb-4 text-gray-900">Timeline</h3>
                 <Timeline ticketId={ticketId} />
               </div>
             </>

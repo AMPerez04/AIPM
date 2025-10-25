@@ -129,7 +129,7 @@ export default function Timeline({ ticketId }: TimelineProps) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-        <span className="ml-3 text-gray-600">Loading timeline...</span>
+        <span className="ml-3 text-gray-800">Loading timeline...</span>
       </div>
     );
   }
@@ -151,7 +151,7 @@ export default function Timeline({ ticketId }: TimelineProps) {
   return (
     <div className="space-y-4">
       {events.length === 0 ? (
-        <div className="text-center py-8 text-gray-600">
+        <div className="text-center py-8 text-gray-800">
           <div className="text-4xl mb-2">📋</div>
           <p>No timeline events yet</p>
         </div>
@@ -174,11 +174,11 @@ export default function Timeline({ ticketId }: TimelineProps) {
                     {event.description}
                   </p>
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-gray-700">
                       {new Date(event.timestamp).toLocaleString()}
                     </p>
                     {event.metadata && (
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-600">
                         {event.type.replace('_', ' ')}
                       </div>
                     )}
@@ -186,7 +186,7 @@ export default function Timeline({ ticketId }: TimelineProps) {
                   
                   {/* Show metadata if available */}
                   {event.metadata && (
-                    <div className="mt-2 text-xs text-gray-600">
+                    <div className="mt-2 text-xs text-gray-800">
                       {Object.entries(event.metadata).map(([key, value]) => (
                         <div key={key} className="flex">
                           <span className="font-medium capitalize">{key}:</span>
