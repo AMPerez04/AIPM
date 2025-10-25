@@ -563,7 +563,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               type: 'audio/pcmu'
             },
             turn_detection: {
-              type: 'server_vad',
+              type: 'semantic_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
               silence_duration_ms: 200,
