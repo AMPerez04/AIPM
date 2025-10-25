@@ -1417,7 +1417,15 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
         
         if (!oaWsReady) {
           oaWsReady = true;
-          
+
+     
+
+          console.log('🔍 [VENDOR] Category:', category);
+          console.log('🔍 [VENDOR] Address:', address);
+          console.log('🔍 [VENDOR] Unit:', unit);
+          console.log('🔍 [VENDOR] Description:', description);
+          console.log('🔍 [VENDOR] Window:', window);
+
           // Provide system instructions for vendor calls
           oaWs.send(JSON.stringify({
             type: 'session.update',
