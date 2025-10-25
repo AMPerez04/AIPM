@@ -64,8 +64,8 @@ const SLA_CONFIG = {
     escalationTime: 30 * 60 * 1000, // 30 minutes
   },
   routine: {
-    responseTime: 2 * 60 * 60 * 1000, // 2 hours
-    escalationTime: 4 * 60 * 60 * 1000, // 4 hours
+    responseTime: 2 * 60 * 1000 * 60, // 2 hours
+    escalationTime: 4 * 60 * 1000 * 60, // 4 hours
   },
 };
 
@@ -299,14 +299,6 @@ async function escalateTicket(ticket: any) {
       severity: ticket.severity,
       escalatedAt: new Date().toISOString(),
     });
-
-    // Notify landlord (commented out - SMS not allowed from Twilio)
-    // if (ticket.property.landlord) {
-    //   const landlordMessage = `🚨 URGENT: Maintenance ticket #${ticket.id} for ${ticket.property.address} has been escalated. Issue: ${ticket.description}. Please contact tenant ${ticket.tenant.firstName} ${ticket.tenant.lastName} at ${ticket.tenant.phone}.`;
-    //   
-    //   // Would need to use outbound call or alternative notification method
-    //   console.log(`Landlord notification suppressed: ${ticket.property.landlord.phone}`);
-    // }
 
     // Try to contact emergency vendors if it's an emergency
     if (ticket.severity === 'emergency') {
@@ -619,14 +611,63 @@ wss.on('connection', async (twilioWs: WebSocket) => {
     },
   });
 
-  // When OpenAI is ready, send session config + your instructions
+  // --- Session state ---
   let oaWsReady = false;
   let sessionConfigured = false;
   let requestCount = 0;
   let lastRequestTime = 0;
   let streamSid: string | null = null;
+  let callSid: string | null = null;
   const MAX_REQUESTS_PER_SECOND = 50; // Rate limiting
-  
+
+  // Audio / hangup flow control
+  let audioStreamingInProgress = false;   // true while we are forwarding OA audio to Twilio
+  let wantHangup = false;                 // model requested hangup
+  let hangupMarkName: string | null = null; // Twilio "mark" name we will wait for before hangup
+  let hangupTimer: NodeJS.Timeout | null = null;
+
+  const clearHangupTimer = () => {
+    if (hangupTimer) {
+      clearTimeout(hangupTimer);
+      hangupTimer = null;
+    }
+  };
+
+  const sendTwilioMark = (name: string) => {
+    if (twilioWs.readyState === WebSocket.OPEN && streamSid) {
+      const frame = {
+        event: 'mark',
+        streamSid,
+        mark: { name }
+      };
+      try {
+        twilioWs.send(JSON.stringify(frame));
+        console.log('📍 Sent Twilio mark:', name);
+      } catch (e) {
+        console.error('❌ Failed to send Twilio mark', e);
+      }
+    }
+  };
+
+  const hangupNow = async (reason?: string) => {
+    clearHangupTimer();
+    wantHangup = false;
+    hangupMarkName = null;
+    try {
+      if (callSid) {
+        await twilioClient.calls(callSid).update({ status: 'completed' });
+        console.log('✅ Twilio call ended via REST', { callSid, reason });
+      } else {
+        console.warn('⚠️ No callSid; closing Twilio WS to end stream.');
+        try { twilioWs.close(); } catch {}
+      }
+    } catch (e) {
+      console.error('❌ Error ending call via REST:', e);
+      // Fallback: close the Twilio WS
+      try { twilioWs.close(); } catch {}
+    }
+  };
+
   oaWs.on('open', () => {
     console.log('OpenAI Realtime API connected');
     
@@ -634,78 +675,88 @@ wss.on('connection', async (twilioWs: WebSocket) => {
     oaWs.send(JSON.stringify({
       type: 'session.update',
       session: {
-        type: 'realtime', // Required in GA interface
+        type: 'realtime',
         model: 'gpt-realtime',
         output_modalities: ['audio'],
         audio: {
           input: {
-            format: {
-              type: 'audio/pcmu'
-            },
+            format: { type: 'audio/pcmu' }, // Twilio G.711 μ-law @ 8kHz
             turn_detection: {
               type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
               silence_duration_ms: 200,
+              idle_timeout_ms: 8000,
               create_response: true
             }
           },
           output: {
-            format: {
-              type: 'audio/pcmu'
-            },
+            format: { type: 'audio/pcmu' },
             voice: 'marin'
           }
         },
-        tools: [{
-          type: 'function',
-          name: 'create_ticket',
-          description: 'Create a maintenance ticket from a tenant call.',
-          parameters: {
-            type: 'object',
-            properties: {
-              tenantName: { 
-                type: 'string', 
-                description: 'Tenant full name (e.g., "John Smith")' 
+        tools: [
+          {
+            type: 'function',
+            name: 'create_ticket',
+            description: 'Create a maintenance ticket from a tenant call.',
+            parameters: {
+              type: 'object',
+              properties: {
+                tenantName: { 
+                  type: 'string', 
+                  description: 'Tenant full name (e.g., "John Smith")' 
+                },
+                tenantPhone: { 
+                  type: 'string', 
+                  description: 'Tenant phone number (e.g., "+1234567890")' 
+                },
+                propertyAddress: { 
+                  type: 'string', 
+                  description: 'Property address (e.g., "123 Main St")' 
+                },
+                propertyUnit: { 
+                  type: 'string', 
+                  description: 'Unit number if applicable (e.g., "Apt 2B", "Unit 101")' 
+                },
+                category: { 
+                  type: 'string', 
+                  enum: ['plumbing', 'electrical', 'hvac', 'appliance', 'lock', 'other'],
+                  description: 'Type of maintenance issue'
+                },
+                severity: { 
+                  type: 'string', 
+                  enum: ['emergency', 'routine'],
+                  description: 'Urgency level of the issue'
+                },
+                description: { 
+                  type: 'string',
+                  description: 'Detailed description of the maintenance issue'
+                },
+                window: { 
+                  type: 'string', 
+                  description: 'Preferred time window for repair (e.g., "today 1-5pm", "tomorrow morning")' 
+                },
+                notes: { 
+                  type: 'string',
+                  description: 'Additional notes or context'
+                }
               },
-              tenantPhone: { 
-                type: 'string', 
-                description: 'Tenant phone number (e.g., "+1234567890")' 
-              },
-              propertyAddress: { 
-                type: 'string', 
-                description: 'Property address (e.g., "123 Main St")' 
-              },
-              propertyUnit: { 
-                type: 'string', 
-                description: 'Unit number if applicable (e.g., "Apt 2B", "Unit 101")' 
-              },
-              category: { 
-                type: 'string', 
-                enum: ['plumbing', 'electrical', 'hvac', 'appliance', 'lock', 'other'],
-                description: 'Type of maintenance issue'
-              },
-              severity: { 
-                type: 'string', 
-                enum: ['emergency', 'routine'],
-                description: 'Urgency level of the issue'
-              },
-              description: { 
-                type: 'string',
-                description: 'Detailed description of the maintenance issue'
-              },
-              window: { 
-                type: 'string', 
-                description: 'Preferred time window for repair (e.g., "today 1-5pm", "tomorrow morning")' 
-              },
-              notes: { 
-                type: 'string',
-                description: 'Additional notes or context'
+              required: ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window']
+            }
+          },
+          {
+            type: 'function',
+            name: 'end_call',
+            description: 'End the active phone call after you have spoken your closing line.',
+            parameters: {
+              type: 'object',
+              properties: {
+                reason: { type: 'string', description: 'Short reason for ending the call' }
               }
-            },
-            required: ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window']
+            }
           }
-        }]
+        ]
       },
     }));
   });
@@ -714,20 +765,19 @@ wss.on('connection', async (twilioWs: WebSocket) => {
   oaWs.on('message', async (data) => {
     try {
       const evt = JSON.parse(data.toString());
-      console.log('📩 OpenAI event:', evt.type);
-      
+      // console.log('📩 OpenAI event:', evt.type);
+
       // Handle error events
       if (evt.type === 'error') {
         console.error('❌ OpenAI Realtime API Error:', evt.error);
         console.error('❌ Error details:', JSON.stringify(evt, null, 2));
-        // Optionally handle the error (reconnect, notify user, etc.)
         return;
       }
 
       // Handle function calls from the model
       if (evt.type === 'response.output_item.done' && evt.item?.type === 'function_call') {
         const call = evt.item;
-        console.log('🔧 Function call received:', call.name, call.arguments);
+        // console.log('🔧 Function call received:', call.name, call.arguments);
         
         try {
           const args = JSON.parse(call.arguments || '{}');
@@ -803,6 +853,36 @@ wss.on('connection', async (twilioWs: WebSocket) => {
             
             // Prompt the model to continue and speak the confirmation
             oaWs.send(JSON.stringify({ type: 'response.create' }));
+          } else if (call.name === 'end_call') {
+            // Model requested to end the call after it finishes speaking
+            wantHangup = true;
+
+            // Acknowledge tool call (no further speech expected)
+            oaWs.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({ ok: true, reason: args?.reason || 'completed' })
+              }
+            }));
+
+            // If there is no audio currently streaming, we can place a mark now
+            if (!audioStreamingInProgress && streamSid) {
+              hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
+              sendTwilioMark(hangupMarkName);
+              clearHangupTimer();
+              // Fallback in case we never get the mark echo
+              hangupTimer = setTimeout(() => {
+                if (wantHangup) hangupNow('fallback-timeout-no-audio');
+              }, 5000);
+            } else {
+              // Otherwise, wait for output_audio.done then send a mark
+              clearHangupTimer();
+              hangupTimer = setTimeout(() => {
+                if (wantHangup) hangupNow('fallback-timeout-waiting-audio');
+              }, 7000);
+            }
           } else {
             throw new Error(`Unknown function: ${call.name}`);
           }
@@ -827,9 +907,9 @@ wss.on('connection', async (twilioWs: WebSocket) => {
         return;
       }
 
-      // Log session events
+      // Log session events & set instructions
       if (evt.type === 'session.updated' || evt.type === 'session.created') {
-        console.log('✅ Session configured:', evt.session);
+        console.log('✅ Session configured');
         sessionConfigured = true;
         
         if (!oaWsReady) {
@@ -843,34 +923,15 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               instructions: `You are RelayPM, a 24/7 voice property maintenance agent for landlords.
 
 Your job is to:
-1. Answer tenant calls for maintenance requests
-2. Collect the following information from the tenant:
-   - Their full name
-   - Their phone number
-   - Property address
-   - Unit number (if applicable)
-   - Description of the issue
-   - Preferred time window for repair
-3. Decide severity (emergency vs routine) based on:
-   - Emergency: Floods, fires, gas leaks, no heat in freezing weather, broken locks, etc.
-   - Routine: Plumbing clogs, broken appliances, HVAC issues (non-emergency), etc.
-4. Create a ticket using the create_ticket tool when you have all required information
-5. Book an approved vendor for the requested time window
-6. Confirm appointment details with the tenant
-7. Notify the landlord via SMS
-8. Hang up after the caller confirms the important details are correct
+1. Answer tenant calls for maintenance requests.
+2. Collect: full name, phone number, property address, unit, description, and preferred window.
+3. Decide severity (emergency vs routine).
+4. When you have all required info (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call create_ticket.
+5. Confirm the ticket number and next steps with the tenant.
+6. Book vendor (handled by backend), reassure the caller.
+7. After the caller confirms details and you say your short goodbye line, CALL the "end_call" tool to hang up. Do NOT keep talking after that.
 
-Be professional, empathetic, and efficient. Confirm all details clearly before ending the call.
-
-For emergency issues, emphasize the urgency and dispatch vendors immediately.
-
-IMPORTANT: 
-- Start the conversation immediately with a greeting. Say hello and introduce yourself as RelayPM.
-- Ask for the tenant's name, phone number, property address, and unit number first.
-- Then ask about the issue, determine severity, and get their preferred time window.
-- When you have all required information (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call the create_ticket tool.
-- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.
-- Do not repeat anything except the most important information, but only once. `,
+Be professional, empathetic, and efficient. Confirm only the most important details exactly once.`
             },
           }));
         }
@@ -886,7 +947,28 @@ IMPORTANT:
             payload: evt.delta // base64 audio/pcmu — no re-encode needed
           }
         };
-        twilioWs.send(JSON.stringify(frame));
+        audioStreamingInProgress = true;
+        try {
+          twilioWs.send(JSON.stringify(frame));
+        } catch (e) {
+          console.error('❌ Error forwarding audio to Twilio:', e);
+        }
+      }
+
+      if (evt.type === 'response.output_audio.done') {
+        // We've sent all audio frames for this response.
+        audioStreamingInProgress = false;
+
+        // If a hangup was requested, place a Twilio mark now, so we end right after playback finishes.
+        if (wantHangup && streamSid && !hangupMarkName) {
+          hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
+          sendTwilioMark(hangupMarkName);
+          clearHangupTimer();
+          // Fallback: if Twilio never echoes the mark, end the call anyway.
+          hangupTimer = setTimeout(() => {
+            if (wantHangup) hangupNow('fallback-timeout-after-done');
+          }, 5000);
+        }
       }
 
       if (evt.type === 'response.output_audio_transcript.delta') {
@@ -901,10 +983,14 @@ IMPORTANT:
   twilioWs.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+
       if (msg.event === 'start') {
-        streamSid = msg.streamSid;
-        console.log('Twilio stream started', streamSid);
+        // "start" message has "start" payload; also support legacy shapes defensively
+        streamSid = msg.start?.streamSid ?? msg.streamSid ?? streamSid;
+        callSid = msg.start?.callSid ?? callSid ?? null;
+        console.log('Twilio stream started', { streamSid, callSid, sessionId });
       }
+
       if (msg.event === 'media' && msg.media?.payload && oaWsReady && sessionConfigured && oaWs.readyState === WebSocket.OPEN) {
         // Debug log first audio chunk
         if (requestCount === 0) {
@@ -925,11 +1011,6 @@ IMPORTANT:
         
         requestCount++;
         
-        // Debug logging for request tracking
-        if (requestCount % 10 === 0) {
-          console.log(`📊 Audio requests sent: ${requestCount} (session: ${sessionId})`);
-        }
-        
         // msg.media.payload = base64 μ-law 8k
         // Send to OpenAI as an audio append
         try {
@@ -941,6 +1022,16 @@ IMPORTANT:
           console.error('❌ Error sending audio chunk:', sendError);
         }
       }
+
+      if (msg.event === 'mark') {
+        const name = msg.mark?.name;
+        console.log('📍 Twilio mark echoed:', name);
+        if (wantHangup && hangupMarkName && name === hangupMarkName) {
+          // Playback for our final response has fully drained into the call; end it
+          hangupNow('mark-ack');
+        }
+      }
+
       if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
         // Only commit if we have audio data (at least 100ms)
         if (requestCount > 0) {
@@ -958,6 +1049,7 @@ IMPORTANT:
   // Clean up
   const shutdown = () => {
     console.log(`📊 Final request count for session ${sessionId}: ${requestCount} requests`);
+    clearHangupTimer();
     try { oaWs.close(); } catch {}
     try { twilioWs.close(); } catch {}
     console.log('🔌 WS closed', sessionId);
@@ -1825,7 +1917,7 @@ app.post('/events/process', async (req, res) => {
     switch (event.type) {
       case 'intake.completed':
         console.log('🔄 Processing intake.completed event');
-        await processVendorSelection(event.payload.tenantId); // Use tenantId to find ticket
+        await processVendorSelection(event.payload.tenantId as any); // kept as-is for testing harness
         break;
         
       case 'vendor.confirmed':
