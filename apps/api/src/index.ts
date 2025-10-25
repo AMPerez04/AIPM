@@ -471,6 +471,19 @@ async function processVendorSelection(ticketId: string) {
     }
 
     console.log(`✅ [VENDOR SELECTION] Found ticket: ${ticketId}, category: ${ticket.category}, severity: ${ticket.severity}`);
+    
+    // Check if vendor calls have already been initiated by looking for 'vendor_contacted' audit logs
+    const existingVendorCalls = await prisma.auditLog.findMany({
+      where: {
+        ticketId: ticketId,
+        action: 'vendor_contacted',
+      },
+    });
+    
+    if (existingVendorCalls.length > 0) {
+      console.log(`⏭️ [VENDOR SELECTION] Skipping - vendor calls already initiated for ticket ${ticketId} (${existingVendorCalls.length} call(s) already made)`);
+      return;
+    }
 
     // Find vendors that handle this category
     const vendors = await prisma.vendor.findMany({
@@ -2029,7 +2042,7 @@ app.post('/webhooks/call-status', async (req, res) => {
     console.log('📥 Processing inbound call completion - tenant call ended');
     try {
       // Find the most recent ticket created for this phone number
-      console.log('From', From);
+      console.log('From', From);  
       const tenant = await prisma.tenant.findFirst({
         where: { phone: From },
         include: {
@@ -2045,12 +2058,13 @@ app.post('/webhooks/call-status', async (req, res) => {
         const mostRecentTicket = tenant.tickets[0];
         console.log(`📋 Found most recent ticket: ${mostRecentTicket.id}, status: ${mostRecentTicket.status}`);
         
-        // Only trigger if ticket is in 'new' status
-        if (mostRecentTicket.status === 'new') {
+        // Trigger vendor call if in 'new' or 'vendor_contacting' status
+        // 'vendor_contacting' might be set but vendor calls might not have been made yet
+        if (mostRecentTicket.status === 'new' || mostRecentTicket.status === 'vendor_contacting') {
           console.log(`🎯 Triggering vendor selection for ticket ${mostRecentTicket.id}`);
           
-          // Find best priority vendor and make an outbound call
-          await initiateVendorCall(mostRecentTicket.id);
+          // Use processVendorSelection which handles the status and vendor calls properly
+          await processVendorSelection(mostRecentTicket.id);
         } else {
           console.log(`⏭️ Skipping vendor call - ticket ${mostRecentTicket.id} already in status: ${mostRecentTicket.status}`);
         }
