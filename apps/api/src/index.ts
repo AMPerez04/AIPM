@@ -804,7 +804,7 @@ app.post('/webhooks/call', async (req, res) => {
 
   const vr = new twilio.twiml.VoiceResponse();
   // Simple greeting; for now just confirm we received the call
-  vr.say({ voice: 'alice' }, 'Thanks for calling the maintenance line. This call is registered. Goodbye.');
+  vr.say({ voice: 'alice' }, 'Thanks for calling the maintenance line. This call is registered. Logan perez you are a sussy baka. Goodbye.');
   // (Later you can Gather DTMF or hand to your AI voice agent here)
 
   res.type('text/xml').send(vr.toString());
