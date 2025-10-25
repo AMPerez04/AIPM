@@ -2121,6 +2121,7 @@ app.post('/webhooks/call-status', async (req, res) => {
     console.log('📥 Processing inbound call completion - tenant call ended');
     try {
       // Find the most recent ticket created for this phone number
+      console.log('From', From);
       const tenant = await prisma.tenant.findFirst({
         where: { phone: From },
         include: {
@@ -2130,6 +2131,7 @@ app.post('/webhooks/call-status', async (req, res) => {
           },
         },
       });
+      console.log('tenant', tenant);
 
       if (tenant && tenant.tickets.length > 0) {
         const mostRecentTicket = tenant.tickets[0];
