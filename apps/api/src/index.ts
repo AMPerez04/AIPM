@@ -335,37 +335,61 @@ wss.on('connection', async (twilioWs: WebSocket) => {
   const sessionId = crypto.randomUUID();
   console.log('📞 Twilio WS connected', sessionId);
 
-  // Create upstream WS to OpenAI Realtime
+  // Create upstream WS to OpenAI Realtime (GA interface - no beta header)
   const oaWs = new WebSocket(OPENAI_REALTIME_URL, {
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'OpenAI-Beta': 'realtime=v1',
     },
   });
 
   // When OpenAI is ready, send session config + your instructions
   let oaWsReady = false;
+  let sessionConfigured = false;
   
   oaWs.on('open', () => {
-    oaWsReady = true;
     console.log('OpenAI Realtime API connected');
     
-    // 1) Set session properties (voice + input encoding)
+    // 1) Set session properties (GA format with session.type)
     oaWs.send(JSON.stringify({
       type: 'session.update',
       session: {
-        // Tell OpenAI what we're sending (Twilio default: 8kHz G.711 μ-law)
-        input_audio_format: { type: 'g711_ulaw', sample_rate: 8000 },
-        output_audio_format: { type: 'g711_ulaw', sample_rate: 8000 }, // so we can send back to Twilio with no resample
-        voice: 'verse', // pick any supported voice
+        type: 'realtime', // Required in GA interface
+        model: 'gpt-realtime',
+        audio: {
+          input: {
+            format: 'g711_ulaw',
+            sample_rate: 8000
+          },
+          output: {
+            format: 'g711_ulaw',
+            sample_rate: 8000,
+            voice: 'verse'
+          }
+        }
       },
     }));
+  });
 
-    // 2) Provide your system instructions (your prompt)
-    oaWs.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        instructions: `You are RelayPM, a 24/7 voice property maintenance agent for landlords.
+  // Handle all OpenAI messages in one handler
+  oaWs.on('message', (data) => {
+    try {
+      const evt = JSON.parse(data.toString());
+      console.log('📩 OpenAI event:', evt.type);
+      
+      // Log session events
+      if (evt.type === 'session.updated' || evt.type === 'session.created') {
+        console.log('✅ Session configured:', evt.session);
+        sessionConfigured = true;
+        
+        if (!oaWsReady) {
+          oaWsReady = true;
+          
+          // Provide system instructions (your prompt)
+          oaWs.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              type: 'realtime',
+              instructions: `You are RelayPM, a 24/7 voice property maintenance agent for landlords.
 
 Your job is to:
 1. Answer tenant calls for maintenance requests
@@ -379,21 +403,32 @@ Your job is to:
 
 Be professional, empathetic, and efficient. Confirm all details clearly before ending the call.
 
-For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
-        modalities: ['audio'],
-        conversation: 'none' // start fresh
-      },
-    }));
+For emergency issues, emphasize the urgency and dispatch vendors immediately.
 
-    // 3) Trigger initial greeting
-    setTimeout(() => {
-      oaWs.send(JSON.stringify({
-        type: 'response.create',
-        response: {
-          modalities: ['audio']
-        },
-      }));
-    }, 500);
+IMPORTANT: Start the conversation immediately with a greeting. Say hello and introduce yourself as RelayPM.`,
+            },
+          }));
+        }
+      }
+
+      // OpenAI audio arrives in chunks
+      if (evt.type === 'response.output_audio.delta' && evt.delta) {
+        // evt.delta is base64 in the output audio format we requested (μ-law 8k)
+        const frame = {
+          event: 'media',
+          media: {
+            payload: evt.delta // base64 μ-law 8k — no re-encode needed
+          }
+        };
+        twilioWs.send(JSON.stringify(frame));
+      }
+
+      if (evt.type === 'response.output_audio_transcript.delta') {
+        console.log('🗣️ Agent speaking:', evt.delta);
+      }
+    } catch (e) {
+      console.error('OpenAI WS parse error', e);
+    }
   });
 
   // Pipe Twilio -> OpenAI (caller audio)
@@ -414,37 +449,9 @@ For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
       if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
         // flush any remaining audio to OpenAI to prompt a response
         oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        oaWs.send(JSON.stringify({
-          type: 'response.create',
-          response: { modalities: ['audio'] }
-        }));
       }
     } catch (e) {
       console.error('Twilio WS parse error', e);
-    }
-  });
-
-  // Pipe OpenAI -> Twilio (agent speech)
-  oaWs.on('message', (data) => {
-    try {
-      const evt = JSON.parse(data.toString());
-
-      // OpenAI audio arrives in chunks; the event key may be:
-      // - response.output_audio.delta (streaming)
-      // - response.completed (finished)
-      if (evt.type === 'response.output_audio.delta' && evt.delta) {
-        // evt.delta is base64 in the output audio format we requested (μ-law 8k)
-        // Send to Twilio as an outbound media frame:
-        const frame = {
-          event: 'media',
-          media: {
-            payload: evt.delta // base64 μ-law 8k — no re-encode needed
-          }
-        };
-        twilioWs.send(JSON.stringify(frame));
-      }
-    } catch (e) {
-      console.error('OpenAI WS parse error', e);
     }
   });
 
