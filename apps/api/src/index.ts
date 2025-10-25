@@ -329,7 +329,7 @@ function encodeUlawChunk(pcm16: Int16Array): Buffer {
 }
 
 // OpenAI Realtime WS URL (server-to-server)
-const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17'; // or latest realtime model
+const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=gpt-realtime'; // or latest realtime model
 
 wss.on('connection', async (twilioWs: WebSocket) => {
   const sessionId = crypto.randomUUID();
