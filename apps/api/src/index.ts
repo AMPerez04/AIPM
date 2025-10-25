@@ -940,7 +940,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               }, 7000);
             }
           } else {
-            throw new Error(`Unknown function: ${call.name}`);
+            throw new Error(`Unknown function: ${call.name}. Available functions are: create_ticket, end_call`);
           }
         } catch (err) {
           console.error('❌ Function call failed:', err);
@@ -1440,7 +1440,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
               }, 7000);
             }
           } else {
-            throw new Error(`Unknown function: ${call.name}`);
+            throw new Error(`Unknown function: ${call.name}. Available functions are: accept_appointment, decline_appointment, end_call`);
           }
         } catch (err) {
           console.error('❌ Vendor function call failed:', err);
