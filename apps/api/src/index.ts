@@ -563,14 +563,18 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               type: 'audio/pcmu'
             },
             turn_detection: {
-              type: 'server_vad'
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 200,
+              create_response: true
             }
           },
           output: {
             format: {
               type: 'audio/pcmu'
             },
-            voice: 'alloy'
+            voice: 'marin'
           }
         },
         tools: [{
@@ -784,7 +788,8 @@ IMPORTANT:
 - Ask for the tenant's name, phone number, property address, and unit number first.
 - Then ask about the issue, determine severity, and get their preferred time window.
 - When you have all required information (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call the create_ticket tool.
-- After creating a ticket, verbally confirm the ticket number and next steps to the tenant. Do not repeat anything except the most important information, but only once. `,
+- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.
+- Do not repeat anything except the most important information, but only once. `,
             },
           }));
         }
