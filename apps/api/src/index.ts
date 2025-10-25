@@ -347,6 +347,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
   let sessionConfigured = false;
   let requestCount = 0;
   let lastRequestTime = 0;
+  let streamSid: string | null = null;
   const MAX_REQUESTS_PER_SECOND = 50; // Rate limiting
   
   oaWs.on('open', () => {
@@ -358,13 +359,21 @@ wss.on('connection', async (twilioWs: WebSocket) => {
       session: {
         type: 'realtime', // Required in GA interface
         model: 'gpt-realtime',
+        output_modalities: ['audio'],
         audio: {
           input: {
-            format: 'g711_ulaw'
+            format: {
+              type: 'audio/pcmu'
+            },
+            turn_detection: {
+              type: 'server_vad'
+            }
           },
           output: {
-            format: 'g711_ulaw',
-            voice: 'verse'
+            format: {
+              type: 'audio/pcmu'
+            },
+            voice: 'alloy'
           }
         }
       },
@@ -421,12 +430,13 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
       }
 
       // OpenAI audio arrives in chunks
-      if (evt.type === 'response.output_audio.delta' && evt.delta) {
-        // evt.delta is base64 in the output audio format we requested (μ-law 8k)
+      if (evt.type === 'response.output_audio.delta' && evt.delta && streamSid) {
+        // evt.delta is base64 in the output audio format we requested (audio/pcmu)
         const frame = {
           event: 'media',
+          streamSid: streamSid,
           media: {
-            payload: evt.delta // base64 μ-law 8k — no re-encode needed
+            payload: evt.delta // base64 audio/pcmu — no re-encode needed
           }
         };
         twilioWs.send(JSON.stringify(frame));
@@ -445,9 +455,15 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.event === 'start') {
-        console.log('Twilio stream started', msg.streamSid);
+        streamSid = msg.streamSid;
+        console.log('Twilio stream started', streamSid);
       }
-      if (msg.event === 'media' && msg.media?.payload && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
+      if (msg.event === 'media' && msg.media?.payload && oaWsReady && sessionConfigured && oaWs.readyState === WebSocket.OPEN) {
+        // Debug log first audio chunk
+        if (requestCount === 0) {
+          console.log('🎤 First audio chunk received, session configured:', sessionConfigured);
+        }
+        
         // Rate limiting to prevent excessive requests
         const now = Date.now();
         if (now - lastRequestTime >= 1000) { // Reset counter every second
@@ -469,10 +485,14 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
         
         // msg.media.payload = base64 μ-law 8k
         // Send to OpenAI as an audio append
-        oaWs.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: msg.media.payload,           // base64 μ-law (matches session input_audio_format)
-        }));
+        try {
+          oaWs.send(JSON.stringify({
+            type: 'input_audio_buffer.append',
+            audio: msg.media.payload,           // base64 μ-law (matches session input_audio_format)
+          }));
+        } catch (sendError) {
+          console.error('❌ Error sending audio chunk:', sendError);
+        }
       }
       if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
         // Only commit if we have audio data (at least 100ms)
