@@ -1,4 +1,5 @@
 import express from 'express';
+import { createServer } from 'http';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
@@ -22,9 +23,15 @@ import {
   type TicketCategory, type TicketSeverity
 } from './types.js';
 
+import { WebSocketServer } from 'ws';
+import WebSocket from 'ws';
+import crypto from 'crypto';
+
 dotenv.config();
 
 const app = express();
+const server = createServer(app);
+const wss = new WebSocketServer({ noServer: true });
 const PORT = process.env.PORT || 3001;
 const prisma = new PrismaClient();
 
@@ -266,6 +273,181 @@ async function processVendorSelection(ticketId: string) {
 
 // Run SLA checks every 5 minutes
 setInterval(checkSLAViolations, 5 * 60 * 1000);
+
+server.on('upgrade', (req, socket, head) => {
+  if (req.url?.startsWith('/ws/twilio-media')) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+// Helper: quick base64 ↔ Buffer
+const b64ToBuf = (b64: string) => Buffer.from(b64, 'base64');
+const bufToB64 = (buf: Buffer) => buf.toString('base64');
+
+// (Optional) Very basic mulaw↔pcm converters (good enough for demo).
+// For better quality, use a lib like `mulaw` or `@discordjs/voice`.
+function ulawToPcm16(mu: number) {
+  // μ-law decode (8-bit -> 16-bit PCM) — compact impl for demo
+  mu = ~mu & 0xff;
+  let sign = mu & 0x80;
+  let exponent = (mu & 0x70) >> 4;
+  let mantissa = mu & 0x0f;
+  let magnitude = ((mantissa << 4) + 8) << (exponent + 3);
+  let sample = sign ? (132 - magnitude) : (magnitude - 132);
+  return sample; // 16-bit signed int
+}
+function pcm16ToUlaw(sample: number) {
+  // clip
+  const BIAS = 0x84;
+  const CLIP = 32635;
+  sample = Math.max(-CLIP, Math.min(CLIP, sample));
+  let sign = (sample < 0) ? 0x80 : 0x00;
+  if (sample < 0) sample = -sample;
+  sample += BIAS;
+  let exponent = 7;
+  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) exponent--;
+  let mantissa = (sample >> (exponent + 3)) & 0x0f;
+  let ulawByte = ~(sign | (exponent << 4) | mantissa) & 0xff;
+  return ulawByte;
+}
+function decodeUlawChunk(b64: string): Int16Array {
+  const bytes = b64ToBuf(b64);
+  const out = new Int16Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = ulawToPcm16(bytes[i]);
+  return out;
+}
+function encodeUlawChunk(pcm16: Int16Array): Buffer {
+  const out = Buffer.alloc(pcm16.length);
+  for (let i = 0; i < pcm16.length; i++) {
+    out[i] = pcm16ToUlaw(pcm16[i]);
+  }
+  return out;
+}
+
+// OpenAI Realtime WS URL (server-to-server)
+const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17'; // or latest realtime model
+
+wss.on('connection', async (twilioWs: WebSocket) => {
+  const sessionId = crypto.randomUUID();
+  console.log('📞 Twilio WS connected', sessionId);
+
+  // Create upstream WS to OpenAI Realtime
+  const oaWs = new WebSocket(OPENAI_REALTIME_URL, {
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'OpenAI-Beta': 'realtime=v1',
+    },
+  });
+
+  // When OpenAI is ready, send session config + your instructions
+  let oaWsReady = false;
+  
+  oaWs.on('open', () => {
+    oaWsReady = true;
+    console.log('OpenAI Realtime API connected');
+    
+    // 1) Set session properties (voice + input encoding)
+    oaWs.send(JSON.stringify({
+      type: 'session.update',
+      session: {
+        // Tell OpenAI what we're sending (Twilio default: 8kHz G.711 μ-law)
+        input_audio_format: { type: 'g711_ulaw', sample_rate: 8000 },
+        output_audio_format: { type: 'g711_ulaw', sample_rate: 8000 }, // so we can send back to Twilio with no resample
+        voice: 'verse', // pick any supported voice
+      },
+    }));
+
+    // 2) Provide your system instructions (your prompt)
+    oaWs.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        instructions: `You are RelayPM, a 24/7 voice property maintenance agent for landlords.
+
+Your job is to:
+1. Answer tenant calls for maintenance requests
+2. Collect details about the maintenance issue
+3. Decide severity (emergency vs routine) based on:
+   - Emergency: Floods, fires, gas leaks, no heat in freezing weather, broken locks, etc.
+   - Routine: Plumbing clogs, broken appliances, HVAC issues (non-emergency), etc.
+4. Book an approved vendor for the requested time window
+5. Confirm appointment details with the tenant
+6. Notify the landlord via SMS
+
+Be professional, empathetic, and efficient. Confirm all details clearly before ending the call.
+
+For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
+        modalities: ['audio'],
+        conversation: 'none' // start fresh
+      },
+    }));
+  });
+
+  // Pipe Twilio -> OpenAI (caller audio)
+  twilioWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.event === 'start') {
+        console.log('Twilio stream started', msg.streamSid);
+      }
+      if (msg.event === 'media' && msg.media?.payload) {
+        // msg.media.payload = base64 μ-law 8k
+        // Send to OpenAI as an audio append
+        oaWs.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: msg.media.payload,           // base64 μ-law (matches session input_audio_format)
+        }));
+      }
+      if (msg.event === 'stop') {
+        // flush any remaining audio to OpenAI to prompt a response
+        oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        oaWs.send(JSON.stringify({
+          type: 'response.create',
+          response: { modalities: ['audio'] }
+        }));
+      }
+    } catch (e) {
+      console.error('Twilio WS parse error', e);
+    }
+  });
+
+  // Pipe OpenAI -> Twilio (agent speech)
+  oaWs.on('message', (data) => {
+    try {
+      const evt = JSON.parse(data.toString());
+
+      // OpenAI audio arrives in chunks; the event key may be:
+      // - response.output_audio.delta (streaming)
+      // - response.completed (finished)
+      if (evt.type === 'response.output_audio.delta' && evt.delta) {
+        // evt.delta is base64 in the output audio format we requested (μ-law 8k)
+        // Send to Twilio as an outbound media frame:
+        const frame = {
+          event: 'media',
+          media: {
+            payload: evt.delta // base64 μ-law 8k — no re-encode needed
+          }
+        };
+        twilioWs.send(JSON.stringify(frame));
+      }
+    } catch (e) {
+      console.error('OpenAI WS parse error', e);
+    }
+  });
+
+  // Clean up
+  const shutdown = () => {
+    try { oaWs.close(); } catch {}
+    try { twilioWs.close(); } catch {}
+    console.log('🔌 WS closed', sessionId);
+  };
+  twilioWs.on('close', shutdown);
+  oaWs.on('close', shutdown);
+  oaWs.on('error', (e) => console.error('OpenAI WS error', e));
+});
 
 // Health check endpoints
 app.get('/health', (req, res) => {
@@ -797,32 +979,30 @@ app.get('/metrics', async (req, res) => {
   }
 });
 
-// --- Voice: inbound call handler (TwiML) ---
-app.post('/webhooks/call', async (req, res) => {
-  const { From, To, CallSid } = req.body;
-
-
+// Inbound phone call → start bidirectional media stream to our WS endpoint
+app.post('/webhooks/call', (req, res) => {
   const vr = new twilio.twiml.VoiceResponse();
-  // Simple greeting; for now just confirm we received the call
-  vr.say({ voice: 'alice' }, 'Thanks for calling the maintenance line. This call is registered. Logan perez you are a sussy baka. Goodbye.');
-  // (Later you can Gather DTMF or hand to your AI voice agent here)
-
+  const connect = vr.connect();
+  // IMPORTANT: use wss and your Render URL below
+  connect.stream({
+    url: 'wss://aipm-c713.onrender.com/ws/twilio-media',
+    // Optional: pass metadata you want to see on connect
+    track: 'inbound_track' // default audio track
+  });
   res.type('text/xml').send(vr.toString());
 });
+
 
 // --- Voice: status callback to track call lifecycle ---
 app.post('/webhooks/call-status', async (req, res) => {
   // Twilio sends events like queued, ringing, in-progress, completed
   const { CallSid, CallStatus, From, To, Timestamp } = req.body;
-
-
-
   res.sendStatus(204);
 });
 
 
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 API server running on http://localhost:${PORT}`);
   console.log(`📊 Metrics available at http://localhost:${PORT}/metrics`);
   console.log(`📡 Events available at http://localhost:${PORT}/events`);
