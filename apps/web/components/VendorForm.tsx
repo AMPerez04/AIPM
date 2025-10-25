@@ -177,7 +177,7 @@ export default function VendorForm({ vendor, onClose, onSave }: VendorFormProps)
         <div className="flex space-x-2">
           <button
             type="submit"
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 bg-[#6366F1] text-white rounded-lg hover:bg-blue-700"
           >
             Save
           </button>

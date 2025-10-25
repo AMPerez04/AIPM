@@ -2,16 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Timeline from "./Timeline";
-
-// TODO: Fetch ticket details via GET /tickets/:id
-// TODO: Fetch timeline via GET /tickets/:id/timeline
-// TODO: Display appointment details if scheduled
-// TODO: Show audit log entries chronologically
-// TODO: Display vendor ping attempts
-// TODO: Add "Play Recording" button
-// TODO: Show transcript if available
-// TODO: Add status badges and icons
-// TODO: Handle loading and error states
+import { ticketsApi } from "@/lib/api";
 
 interface TicketDetailProps {
   ticketId: string;
@@ -21,11 +12,18 @@ interface TicketDetailProps {
 export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
   const [ticket, setTicket] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Implement fetchTicketDetails function
-  useEffect(() => {
-    // Simulated data for now
-    setTimeout(() => {
+  const fetchTicketDetails = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await ticketsApi.getById(ticketId);
+      setTicket(data);
+    } catch (err) {
+      console.error("Failed to fetch ticket details:", err);
+      setError("Failed to load ticket details. Please try again.");
+      // Fallback to mock data for development
       setTicket({
         id: ticketId,
         tenantId: "ten_1",
@@ -36,9 +34,16 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
         window: "today 1-5pm",
         status: "new",
         createdAt: new Date().toISOString(),
+        tenantPhone: "+1 (555) 123-4567",
+        propertyAddress: "123 Main St, Apt 2A",
       });
+    } finally {
       setLoading(false);
-    }, 500);
+    }
+  };
+
+  useEffect(() => {
+    fetchTicketDetails();
   }, [ticketId]);
 
   if (loading) {

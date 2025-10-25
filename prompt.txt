@@ -1,0 +1,1 @@
+Create a frontend website for property owners where we connect renters to ai agents when they have complaints or service requests. the ai agent would confirm what problem they have, their place of stay, phone number, and also would contact the neccessary service (plumber, electritian, etc...) 

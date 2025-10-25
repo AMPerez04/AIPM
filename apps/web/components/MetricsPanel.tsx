@@ -13,63 +13,88 @@ import { useState, useEffect } from "react";
 
 export default function MetricsPanel() {
   const [metrics, setMetrics] = useState({
-    timeToBook: 0,
-    callsHandled: 0,
-    openTickets: 0,
-    scheduledAppointments: 0,
+    activeRequests: 0,
+    emergencyRequests: 0,
+    scheduledToday: 0,
+    avgResponseTime: 0,
+    totalProperties: 0,
+    aiAgentStatus: "active"
   });
 
   // TODO: Implement fetchMetrics function
   useEffect(() => {
     // Simulated data for now
     setMetrics({
-      timeToBook: 15,
-      callsHandled: 42,
-      openTickets: 8,
-      scheduledAppointments: 5,
+      activeRequests: 8,
+      emergencyRequests: 2,
+      scheduledToday: 5,
+      avgResponseTime: 12,
+      totalProperties: 12,
+      aiAgentStatus: "active"
     });
   }, []);
 
   return (
     <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-6">
-      <h2 className="text-xl font-semibold mb-6 text-gray-900">Metrics</h2>
+      <div className="flex items-center space-x-2 mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">Dashboard</h2>
+        <div className={`w-2 h-2 rounded-full ${
+          metrics.aiAgentStatus === "active" ? "bg-green-500" : "bg-red-500"
+        }`}></div>
+      </div>
       
       <div className="space-y-4">
         <div className="border-b pb-4">
-          <p className="text-sm text-gray-600">Time to Book</p>
+          <p className="text-sm text-gray-600">Active Requests</p>
           <p className="text-3xl font-bold text-blue-600">
-            {metrics.timeToBook}s
+            {metrics.activeRequests}
           </p>
         </div>
 
         <div className="border-b pb-4">
-          <p className="text-sm text-gray-600">Calls Handled Today</p>
+          <p className="text-sm text-gray-600">Emergency Requests</p>
+          <p className="text-3xl font-bold text-red-600">
+            {metrics.emergencyRequests}
+          </p>
+        </div>
+
+        <div className="border-b pb-4">
+          <p className="text-sm text-gray-600">Scheduled Today</p>
           <p className="text-3xl font-bold text-green-600">
-            {metrics.callsHandled}
+            {metrics.scheduledToday}
           </p>
         </div>
 
         <div className="border-b pb-4">
-          <p className="text-sm text-gray-600">Open Tickets</p>
-          <p className="text-3xl font-bold text-orange-600">
-            {metrics.openTickets}
+          <p className="text-sm text-gray-600">Avg Response Time</p>
+          <p className="text-3xl font-bold text-purple-600">
+            {metrics.avgResponseTime}m
           </p>
         </div>
 
         <div>
-          <p className="text-sm text-gray-600">Scheduled</p>
-          <p className="text-3xl font-bold text-purple-600">
-            {metrics.scheduledAppointments}
+          <p className="text-sm text-gray-600">Total Properties</p>
+          <p className="text-3xl font-bold text-gray-600">
+            {metrics.totalProperties}
           </p>
         </div>
       </div>
 
-      {/* TODO: Add Simulate Vendor YES toggle */}
+      {/* AI Agent Status */}
       <div className="mt-6 pt-6 border-t border-gray-200">
-        <label className="flex items-center space-x-3 cursor-pointer">
-          <input type="checkbox" className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2" />
-          <span className="text-sm text-gray-700 font-medium">Simulate Vendor YES</span>
-        </label>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-700 font-medium">AI Agent</span>
+          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+            metrics.aiAgentStatus === "active" 
+              ? "bg-green-100 text-green-800" 
+              : "bg-red-100 text-red-800"
+          }`}>
+            {metrics.aiAgentStatus}
+          </span>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          Automatically handling tenant requests
+        </p>
       </div>
     </div>
   );
