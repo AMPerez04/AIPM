@@ -784,7 +784,7 @@ IMPORTANT:
 - Ask for the tenant's name, phone number, property address, and unit number first.
 - Then ask about the issue, determine severity, and get their preferred time window.
 - When you have all required information (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call the create_ticket tool.
-- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.`,
+- After creating a ticket, verbally confirm the ticket number and next steps to the tenant. Do not repeat anything except the most important information, but only once. `,
             },
           }));
         }
