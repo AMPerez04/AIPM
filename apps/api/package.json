@@ -3,29 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "db:init": "tsx ../../scripts/init-db.ts",
-    "db:generate": "prisma generate --schema=../../prisma/schema.prisma",
-    "db:migrate": "prisma migrate dev --schema=../../prisma/schema.prisma",
-    "db:studio": "prisma studio --schema=../../prisma/schema.prisma",
-    "db:seed": "tsx ../../scripts/seed-db.ts"
+    "db:generate": "pnpm exec prisma generate",
+    "db:migrate": "pnpm exec prisma migrate dev",
+    "db:seed": "pnpm exec prisma db seed"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@shared/types": "workspace:*",
-    "better-sqlite3": "^9.2.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "twilio": "^4.20.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.0",
     "eslint": "^8.56.0",
