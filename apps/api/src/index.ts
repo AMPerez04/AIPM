@@ -384,6 +384,16 @@ For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
         conversation: 'none' // start fresh
       },
     }));
+
+    // 3) Trigger initial greeting
+    setTimeout(() => {
+      oaWs.send(JSON.stringify({
+        type: 'response.create',
+        response: {
+          modalities: ['audio']
+        },
+      }));
+    }, 500);
   });
 
   // Pipe Twilio -> OpenAI (caller audio)
@@ -393,7 +403,7 @@ For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
       if (msg.event === 'start') {
         console.log('Twilio stream started', msg.streamSid);
       }
-      if (msg.event === 'media' && msg.media?.payload) {
+      if (msg.event === 'media' && msg.media?.payload && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
         // msg.media.payload = base64 μ-law 8k
         // Send to OpenAI as an audio append
         oaWs.send(JSON.stringify({
@@ -401,7 +411,7 @@ For emergency issues, emphasize the urgency and dispatch vendors immediately.`,
           audio: msg.media.payload,           // base64 μ-law (matches session input_audio_format)
         }));
       }
-      if (msg.event === 'stop') {
+      if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
         // flush any remaining audio to OpenAI to prompt a response
         oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         oaWs.send(JSON.stringify({
