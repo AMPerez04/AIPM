@@ -964,7 +964,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
             type: 'session.update',
             session: {
               type: 'realtime',
-              instructions: `You are RelayPM, a 24/7 voice property maintenance agent for landlords.
+              instructions: `You are Properly AI, a 24/7 voice property maintenance agent for landlords.
 
 Your job is to:
 1. Answer tenant calls for maintenance requests.
@@ -1106,7 +1106,8 @@ Be professional, empathetic, and efficient. Confirm only the most important deta
 // Vendor call handler (Realtime API)
 wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
   const sessionId = crypto.randomUUID();
-  console.log('📞 Vendor Twilio WS connected', sessionId);
+  console.log('📞 [VENDOR] Twilio WS connected', sessionId);
+  console.log('📞 [VENDOR] Request URL:', req.url);
 
   // Extract ticket and vendor info from query params
   const url = new URL(req.url, 'http://localhost');
@@ -1422,7 +1423,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
             type: 'session.update',
             session: {
               type: 'realtime',
-              instructions: `You are RelayPM, calling a vendor about a maintenance job.
+              instructions: `You are Properly AI, calling a vendor about a maintenance job.
 
 Job Details:
 - Issue Type: ${category || 'maintenance'}
@@ -2578,7 +2579,7 @@ app.post('/webhooks/vendor-call-alt', (req, res) => {
   const vr = new twilio.twiml.VoiceResponse();
   
   // Speak to vendor about the job
-  const greeting = `Hello, this is Relay PM. We have a ${category} job for ${address}`;
+  const greeting = `Hello, this is Properly AI. We have a ${category} job for ${address}`;
   if (unit) {
     vr.say(greeting + `, unit ${unit}.`);
   } else {
@@ -2614,11 +2615,14 @@ app.post('/webhooks/vendor-call-alt', (req, res) => {
 
 // POST /webhooks/vendor-call - Handles Twilio callback when vendor answers
 app.post('/webhooks/vendor-call', (req, res) => {
+  console.log('📞 [VENDOR-CALL] Webhook received', req.query);
+  
   // Get ticket info from request params (passed when creating the call)
   const { ticketId, vendorId, category, description, address, unit, window } = req.query;
   
   // Check if BASE_URL is set before using it
   if (!process.env.BASE_URL) {
+    console.error('❌ [VENDOR-CALL] BASE_URL not configured');
     const vr = new twilio.twiml.VoiceResponse();
     vr.say('Error: BASE_URL not configured. Goodbye.');
     res.type('text/xml').send(vr.toString());
@@ -2629,7 +2633,9 @@ app.post('/webhooks/vendor-call', (req, res) => {
   const connect = vr.connect();
   
   // Build WebSocket URL with ticket info as query params
-  const wsUrl = new URL(`${process.env.BASE_URL}/ws/vendor-media`);
+  // Convert https to wss for WebSocket connection
+  const wsBaseUrl = process.env.BASE_URL.replace('https://', 'wss://');
+  const wsUrl = new URL(`${wsBaseUrl}/ws/vendor-media`);
   wsUrl.searchParams.set('ticketId', ticketId as string);
   if (vendorId) wsUrl.searchParams.set('vendorId', vendorId as string);
   wsUrl.searchParams.set('category', category as string);
@@ -2637,6 +2643,8 @@ app.post('/webhooks/vendor-call', (req, res) => {
   wsUrl.searchParams.set('address', address as string);
   if (unit) wsUrl.searchParams.set('unit', unit as string);
   wsUrl.searchParams.set('window', window as string);
+  
+  console.log('📞 [VENDOR-CALL] Connecting to WebSocket:', wsUrl.toString());
   
   connect.stream({
     url: wsUrl.toString(),
