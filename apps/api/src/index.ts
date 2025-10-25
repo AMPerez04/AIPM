@@ -85,6 +85,79 @@ async function logAudit(ticketId: string, action: string, details?: any) {
   }
 }
 
+// Helper function to find or create tenant by name and phone
+async function findOrCreateTenant(name: string, phone: string, propertyId: string) {
+  try {
+    // Try to find existing tenant by phone
+    let tenant = await prisma.tenant.findFirst({
+      where: { phone },
+    });
+
+    if (!tenant) {
+      // Create new tenant
+      const [firstName, ...lastNameParts] = name.split(' ');
+      const lastName = lastNameParts.join(' ') || '';
+      
+      tenant = await prisma.tenant.create({
+        data: {
+          firstName,
+          lastName,
+          phone,
+          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
+          propertyId,
+        },
+      });
+      console.log('✅ Created new tenant:', tenant.id);
+    } else {
+      console.log('✅ Found existing tenant:', tenant.id);
+    }
+
+    return tenant;
+  } catch (error) {
+    console.error('Error finding/creating tenant:', error);
+    throw error;
+  }
+}
+
+// Helper function to find or create property by address
+async function findOrCreateProperty(address: string, unit?: string) {
+  try {
+    // Try to find existing property by address
+    let property = await prisma.property.findFirst({
+      where: {
+        address,
+        unit: unit || null,
+      },
+    });
+
+    if (!property) {
+      // Get a default landlord (you might want to handle this differently)
+      const defaultLandlord = await prisma.landlord.findFirst();
+      
+      if (!defaultLandlord) {
+        throw new Error('No landlord found in database');
+      }
+
+      // Create new property
+      property = await prisma.property.create({
+        data: {
+          address,
+          unit: unit || null,
+          landlordId: defaultLandlord.id,
+        },
+      });
+      console.log('✅ Created new property:', property.id);
+    } else {
+      console.log('✅ Found existing property:', property.id);
+    }
+
+    return property;
+  } catch (error) {
+    console.error('Error finding/creating property:', error);
+    throw error;
+  }
+}
+
 // Helper function to check SLA violations
 async function checkSLAViolations() {
   try {
@@ -383,13 +456,62 @@ wss.on('connection', async (twilioWs: WebSocket) => {
             },
             voice: 'alloy'
           }
-        }
+        },
+        tools: [{
+          type: 'function',
+          name: 'create_ticket',
+          description: 'Create a maintenance ticket from a tenant call.',
+          parameters: {
+            type: 'object',
+            properties: {
+              tenantName: { 
+                type: 'string', 
+                description: 'Tenant full name (e.g., "John Smith")' 
+              },
+              tenantPhone: { 
+                type: 'string', 
+                description: 'Tenant phone number (e.g., "+1234567890")' 
+              },
+              propertyAddress: { 
+                type: 'string', 
+                description: 'Property address (e.g., "123 Main St")' 
+              },
+              propertyUnit: { 
+                type: 'string', 
+                description: 'Unit number if applicable (e.g., "Apt 2B", "Unit 101")' 
+              },
+              category: { 
+                type: 'string', 
+                enum: ['plumbing', 'electrical', 'hvac', 'appliance', 'lock', 'other'],
+                description: 'Type of maintenance issue'
+              },
+              severity: { 
+                type: 'string', 
+                enum: ['emergency', 'routine'],
+                description: 'Urgency level of the issue'
+              },
+              description: { 
+                type: 'string',
+                description: 'Detailed description of the maintenance issue'
+              },
+              window: { 
+                type: 'string', 
+                description: 'Preferred time window for repair (e.g., "today 1-5pm", "tomorrow morning")' 
+              },
+              notes: { 
+                type: 'string',
+                description: 'Additional notes or context'
+              }
+            },
+            required: ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window']
+          }
+        }]
       },
     }));
   });
 
   // Handle all OpenAI messages in one handler
-  oaWs.on('message', (data) => {
+  oaWs.on('message', async (data) => {
     try {
       const evt = JSON.parse(data.toString());
       console.log('📩 OpenAI event:', evt.type);
@@ -399,6 +521,109 @@ wss.on('connection', async (twilioWs: WebSocket) => {
         console.error('❌ OpenAI Realtime API Error:', evt.error);
         console.error('❌ Error details:', JSON.stringify(evt, null, 2));
         // Optionally handle the error (reconnect, notify user, etc.)
+        return;
+      }
+
+      // Handle function calls from the model
+      if (evt.type === 'response.output_item.done' && evt.item?.type === 'function_call') {
+        const call = evt.item;
+        console.log('🔧 Function call received:', call.name, call.arguments);
+        
+        try {
+          const args = JSON.parse(call.arguments || '{}');
+          
+          if (call.name === 'create_ticket') {
+            // Validate required fields
+            const requiredFields = ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window'];
+            const missingFields = requiredFields.filter(field => !args[field]);
+            
+            if (missingFields.length > 0) {
+              throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+            }
+            
+            // Find or create property first
+            const property = await findOrCreateProperty(args.propertyAddress, args.propertyUnit);
+            
+            // Find or create tenant
+            const tenant = await findOrCreateTenant(args.tenantName, args.tenantPhone, property.id);
+            
+            // Create ticket via Prisma
+            const ticket = await prisma.ticket.create({
+              data: {
+                tenantId: tenant.id,
+                propertyId: property.id,
+                category: args.category,
+                severity: args.severity,
+                description: args.description,
+                window: args.window,
+                notes: args.notes ?? null,
+                status: 'new'
+              },
+              include: {
+                tenant: true,
+                property: true,
+              },
+            });
+            
+            // Log audit
+            await logAudit(ticket.id, 'ticket_created_via_tool', args);
+            
+            // Emit intake completed event
+            const intakeEvent: IntakeCompletedEvent = {
+              type: 'intake.completed',
+              payload: {
+                tenantId: ticket.tenantId,
+                propertyId: ticket.propertyId,
+                category: ticket.category as TicketCategory,
+                severity: ticket.severity as TicketSeverity,
+                window: ticket.window,
+                notes: ticket.notes ?? undefined,
+              },
+            };
+            emitEvent(intakeEvent);
+            
+            console.log('✅ Ticket created via tool:', ticket.id);
+            
+            // Return tool result to the model
+            oaWs.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({
+                  success: true,
+                  ticketId: ticket.id,
+                  status: ticket.status,
+                  category: ticket.category,
+                  severity: ticket.severity,
+                  message: `Ticket #${ticket.id} created successfully. ${ticket.severity === 'emergency' ? 'Emergency' : 'Routine'} ${ticket.category} issue scheduled for ${ticket.window}.`
+                })
+              }
+            }));
+            
+            // Prompt the model to continue and speak the confirmation
+            oaWs.send(JSON.stringify({ type: 'response.create' }));
+          } else {
+            throw new Error(`Unknown function: ${call.name}`);
+          }
+        } catch (err) {
+          console.error('❌ Function call failed:', err);
+          
+          // Return error to the model
+          oaWs.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: call.call_id,
+              output: JSON.stringify({ 
+                success: false,
+                error: err instanceof Error ? err.message : 'Unknown error occurred'
+              })
+            }
+          }));
+          
+          oaWs.send(JSON.stringify({ type: 'response.create' }));
+        }
         return;
       }
 
@@ -419,19 +644,31 @@ wss.on('connection', async (twilioWs: WebSocket) => {
 
 Your job is to:
 1. Answer tenant calls for maintenance requests
-2. Collect details about the maintenance issue
+2. Collect the following information from the tenant:
+   - Their full name
+   - Their phone number
+   - Property address
+   - Unit number (if applicable)
+   - Description of the issue
+   - Preferred time window for repair
 3. Decide severity (emergency vs routine) based on:
    - Emergency: Floods, fires, gas leaks, no heat in freezing weather, broken locks, etc.
    - Routine: Plumbing clogs, broken appliances, HVAC issues (non-emergency), etc.
-4. Book an approved vendor for the requested time window
-5. Confirm appointment details with the tenant
-6. Notify the landlord via SMS
+4. Create a ticket using the create_ticket tool when you have all required information
+5. Book an approved vendor for the requested time window
+6. Confirm appointment details with the tenant
+7. Notify the landlord via SMS
 
 Be professional, empathetic, and efficient. Confirm all details clearly before ending the call.
 
 For emergency issues, emphasize the urgency and dispatch vendors immediately.
 
-IMPORTANT: Start the conversation immediately with a greeting. Say hello and introduce yourself as RelayPM.`,
+IMPORTANT: 
+- Start the conversation immediately with a greeting. Say hello and introduce yourself as RelayPM.
+- Ask for the tenant's name, phone number, property address, and unit number first.
+- Then ask about the issue, determine severity, and get their preferred time window.
+- When you have all required information (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call the create_ticket tool.
+- After creating a ticket, verbally confirm the ticket number and next steps to the tenant.`,
             },
           }));
         }

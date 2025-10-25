@@ -33,6 +33,14 @@ async function main() {
     },
   });
 
+  const property3 = await prisma.property.create({
+    data: {
+      address: '7304 Lindell Blvd',
+      unit: 'Unit 1B',
+      landlordId: landlord.id,
+    },
+  });
+
   console.log('✅ Created properties:', property1.address, property2.address);
 
   // Create sample tenants
@@ -53,6 +61,16 @@ async function main() {
       phone: '+1234567892',
       email: 'bob.williams@example.com',
       propertyId: property2.id,
+    },
+  });
+
+  const tenant3 = await prisma.tenant.create({
+    data: {
+      firstName: 'Austin',
+      lastName: 'Perez',
+      phone: '+13145606377',
+      email: 'austin.perez@example.com',
+      propertyId: property3.id,
     },
   });
 
