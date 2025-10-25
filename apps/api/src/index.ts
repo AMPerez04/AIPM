@@ -320,6 +320,88 @@ async function contactEmergencyVendors(ticket: any) {
   }
 }
 
+// Helper function to initiate outbound call to vendor
+async function initiateVendorCall(ticketId: string) {
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        tenant: true,
+        property: true,
+      },
+    });
+
+    if (!ticket) {
+      console.error(`Ticket ${ticketId} not found`);
+      return;
+    }
+
+    // Find vendors that handle this category, ordered by priority
+    const vendors = await prisma.vendor.findMany({
+      where: {
+        specialties: {
+          contains: ticket.category,
+        },
+      },
+      orderBy: { priority: 'asc' },
+    });
+
+    if (vendors.length === 0) {
+      console.error(`No vendors found for category: ${ticket.category}`);
+      await logAudit(ticketId, 'no_vendors_found', { category: ticket.category });
+      return;
+    }
+
+    // Get the best priority vendor (first in list)
+    const bestVendor = vendors[0];
+    const vendorPhones = JSON.parse(bestVendor.phones);
+    
+    if (vendorPhones.length === 0) {
+      console.error(`Vendor ${bestVendor.name} has no phone numbers`);
+      return;
+    }
+
+    // Update ticket status
+    await prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: 'vendor_contacting' },
+    });
+
+    // Make outbound call to vendor
+    console.log(`📞 Initiating call to vendor ${bestVendor.name} at ${vendorPhones[0]} for ticket ${ticketId}`);
+    
+    // Build URL with ticket info as query params
+    const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
+    url.searchParams.set('ticketId', ticketId);
+    url.searchParams.set('category', ticket.category);
+    url.searchParams.set('description', ticket.description);
+    url.searchParams.set('address', ticket.property.address);
+    url.searchParams.set('unit', ticket.property.unit || '');
+    url.searchParams.set('window', ticket.window);
+    
+    const call = await twilioClient.calls.create({
+      to: vendorPhones[0],
+      from: process.env.TWILIO_PHONE_NUMBER!,
+      url: url.toString(),
+      method: 'POST',
+      statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+      statusCallbackMethod: 'POST',
+    });
+
+    // Log audit
+    await logAudit(ticketId, 'vendor_call_initiated', {
+      vendorId: bestVendor.id,
+      vendorName: bestVendor.name,
+      callSid: call.sid,
+      vendorPhone: vendorPhones[0],
+    });
+
+    console.log(`✅ Call initiated to vendor: ${call.sid}`);
+  } catch (error) {
+    console.error('Error initiating vendor call:', error);
+  }
+}
+
 // Helper function to process vendor selection and pinging
 async function processVendorSelection(ticketId: string) {
   try {
@@ -1742,10 +1824,150 @@ app.post('/webhooks/call', (req, res) => {
 });
 
 
+// POST /webhooks/vendor-call - Handles Twilio callback when vendor answers
+app.post('/webhooks/vendor-call', (req, res) => {
+  // Get ticket info from request params (passed when creating the call)
+  const { ticketId, category, description, address, unit, window } = req.query;
+  
+  const vr = new twilio.twiml.VoiceResponse();
+  
+  // Speak to vendor about the job
+  const greeting = `Hello, this is Relay PM. We have a ${category} job for ${address}`;
+  if (unit) {
+    vr.say(greeting + `, unit ${unit}.`);
+  } else {
+    vr.say(greeting + '.');
+  }
+  
+  vr.say(`The issue is: ${description}. The tenant requested ${window}. Can you confirm availability?`);
+  vr.pause({ length: 5 });
+  vr.say('Thank you. Press 1 to accept this appointment. Press 2 to decline.');
+  
+  // Use <Gather> to capture vendor's response
+  const gather = vr.gather({
+    numDigits: 1,
+    action: `${process.env.BASE_URL}/webhooks/vendor-response?ticketId=${ticketId}`,
+    method: 'POST',
+  });
+  
+  gather.say('Please press 1 to accept or 2 to decline.');
+  
+  // If no response, say goodbye
+  vr.say('Thank you for your response. Goodbye.');
+  vr.hangup();
+  
+  res.type('text/xml').send(vr.toString());
+});
+
+// POST /webhooks/vendor-response - Handles vendor's keypress response
+app.post('/webhooks/vendor-response', async (req, res) => {
+  const { ticketId } = req.query;
+  const { Digits } = req.body;
+  
+  const vr = new twilio.twiml.VoiceResponse();
+  
+  if (!ticketId) {
+    vr.say('Error: no ticket ID provided. Goodbye.');
+    res.type('text/xml').send(vr.toString());
+    return;
+  }
+  
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId as string },
+      include: {
+        tenant: true,
+        property: true,
+      },
+    });
+    
+    if (!ticket) {
+      vr.say('Ticket not found. Goodbye.');
+      res.type('text/xml').send(vr.toString());
+      return;
+    }
+    
+    if (Digits === '1') {
+      // Vendor accepted
+      vr.say('Thank you for accepting. You should receive an SMS with the appointment details shortly.');
+      
+      // Update ticket status
+      await prisma.ticket.update({
+        where: { id: ticketId as string },
+        data: { status: 'scheduled' },
+      });
+      
+      // Log acceptance
+      await logAudit(ticketId as string, 'vendor_accepted_via_call', {
+        digits: Digits,
+      });
+      
+      console.log(`✅ Vendor accepted appointment for ticket ${ticketId}`);
+    } else if (Digits === '2') {
+      // Vendor declined
+      vr.say('Thank you for letting us know. We will contact another vendor. Goodbye.');
+      
+      // Log decline
+      await logAudit(ticketId as string, 'vendor_declined_via_call', {
+        digits: Digits,
+      });
+      
+      // TODO: Try next vendor in priority order
+      console.log(`❌ Vendor declined for ticket ${ticketId}`);
+    } else {
+      vr.say('Invalid response. Goodbye.');
+    }
+  } catch (error) {
+    console.error('Error handling vendor response:', error);
+    vr.say('An error occurred. Goodbye.');
+  }
+  
+  res.type('text/xml').send(vr.toString());
+});
+
 // --- Voice: status callback to track call lifecycle ---
 app.post('/webhooks/call-status', async (req, res) => {
   // Twilio sends events like queued, ringing, in-progress, completed
   const { CallSid, CallStatus, From, To, Timestamp } = req.body;
+  
+  console.log('📞 Call status update:', {
+    CallSid,
+    CallStatus,
+    From,
+    To,
+    Timestamp
+  });
+
+  // When call completes, find the most recent ticket for this caller and trigger vendor selection
+  if (CallStatus === 'completed' && From) {
+    try {
+      // Find the most recent ticket created for this phone number
+      const tenant = await prisma.tenant.findFirst({
+        where: { phone: From },
+        include: {
+          tickets: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      if (tenant && tenant.tickets.length > 0) {
+        const mostRecentTicket = tenant.tickets[0];
+        
+        // Only trigger if ticket is in 'new' status
+        if (mostRecentTicket.status === 'new') {
+          console.log(`🎯 Triggering vendor selection for ticket ${mostRecentTicket.id}`);
+          
+          // Find best priority vendor and make an outbound call
+          await initiateVendorCall(mostRecentTicket.id);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error processing call completion:', error);
+    }
+  }
+  
   res.sendStatus(204);
 });
 
