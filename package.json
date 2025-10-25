@@ -1,0 +1,29 @@
+{
+  "name": "ai-hackathon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered application",
+  "packageManager": "pnpm@10.12.4",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "turbo run dev --parallel --filter=@ai-hackathon/api --filter=@ai-hackathon/web",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "db:init": "pnpm --filter @ai-hackathon/api db:init",
+    "db:generate": "pnpm --filter @ai-hackathon/api db:generate",
+    "db:migrate": "pnpm --filter @ai-hackathon/api db:migrate",
+    "db:studio": "pnpm --filter @ai-hackathon/api db:studio",
+    "db:seed": "pnpm --filter @ai-hackathon/api db:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prisma": "5.22.0",
+    "turbo": "^2.5.8",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

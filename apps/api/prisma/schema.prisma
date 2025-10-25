@@ -1,0 +1,103 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id         String   @id @default(uuid())
+  firstName  String
+  lastName   String
+  phone      String
+  email      String?
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id])
+  createdAt  DateTime @default(now())
+  
+  tickets    Ticket[]
+}
+
+model Landlord {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  phone     String
+  createdAt DateTime @default(now())
+  
+  properties Property[]
+}
+
+model Property {
+  id        String   @id @default(uuid())
+  address   String
+  unit      String?
+  landlordId String
+  landlord  Landlord @relation(fields: [landlordId], references: [id])
+  createdAt DateTime @default(now())
+  
+  tenants   Tenant[]
+  tickets   Ticket[]
+}
+
+model Ticket {
+  id          String           @id @default(uuid())
+  tenantId    String
+  propertyId  String
+  category    String           // 'plumbing' | 'electrical' | 'hvac' | 'lock'
+  severity    String           // 'emergency' | 'routine'
+  description String
+  window      String
+  status      String           // 'new' | 'vendor_contacting' | 'scheduled' | 'closed'
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  
+  tenant      Tenant           @relation(fields: [tenantId], references: [id])
+  property    Property         @relation(fields: [propertyId], references: [id])
+  appointments Appointment[]
+  auditLogs   AuditLog[]
+}
+
+model Vendor {
+  id          String   @id @default(uuid())
+  name        String
+  phones      String   // JSON array of phone numbers
+  specialties String   // JSON array of categories
+  hours       String
+  priority    Int      @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  
+  appointments Appointment[]
+}
+
+model Appointment {
+  id                 String          @id @default(uuid())
+  ticketId           String
+  vendorId           String
+  startsAt           DateTime
+  status             String          // 'tentative' | 'confirmed' | 'done'
+  confirmationMethod String          // 'sms' | 'voice'
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  
+  ticket             Ticket          @relation(fields: [ticketId], references: [id])
+  vendor             Vendor          @relation(fields: [vendorId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  ticketId  String
+  action    String
+  details   String?  // JSON
+  createdAt DateTime @default(now())
+  
+  ticket    Ticket   @relation(fields: [ticketId], references: [id])
+}
+
