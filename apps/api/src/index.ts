@@ -69,10 +69,59 @@ const SLA_CONFIG = {
   },
 };
 
+// Helper function to process event queue
+async function processEventQueue() {
+  while (eventQueue.length > 0) {
+    const event = eventQueue.shift();
+    if (!event) continue;
+    
+    try {
+      console.log(`🔄 Processing event: ${event.type}`);
+      
+      switch (event.type) {
+        case 'intake.completed':
+          console.log('🔄 Processing intake.completed event');
+          // Get ticketId from the first ticket created by this tenant/property combo
+          const ticket = await prisma.ticket.findFirst({
+            where: {
+              tenantId: event.payload.tenantId,
+              propertyId: event.payload.propertyId,
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+          
+          if (!ticket) {
+            console.error('❌ No ticket found for intake.completed event');
+            break;
+          }
+          
+          console.log(`🔍 Found ticket ${ticket.id} for vendor selection`);
+          await processVendorSelection(ticket.id);
+          break;
+          
+        case 'vendor.confirmed':
+          console.log('🔄 Processing vendor.confirmed event');
+          // TODO: Implement tenant notification logic
+          break;
+          
+        case 'appointment.confirmed':
+          console.log('🔄 Processing appointment.confirmed event');
+          // TODO: Implement final confirmation logic
+          break;
+      }
+    } catch (error) {
+      console.error('❌ Error processing event:', error);
+    }
+  }
+}
+
 // Helper function to emit events
 function emitEvent(event: Event) {
   eventQueue.push(event);
   console.log(`📡 Event emitted: ${event.type}`, event.payload);
+  
+  // Process event immediately
+  processEventQueue();
 }
 
 // Helper function to log audit trail
@@ -406,6 +455,8 @@ async function initiateVendorCall(ticketId: string) {
 // Helper function to process vendor selection and pinging
 async function processVendorSelection(ticketId: string) {
   try {
+    console.log(`🔍 [VENDOR SELECTION] Starting vendor selection for ticket ${ticketId}`);
+    
     const ticket = await prisma.ticket.findUnique({
       where: { id: ticketId },
       include: {
@@ -415,9 +466,11 @@ async function processVendorSelection(ticketId: string) {
     });
 
     if (!ticket) {
-      console.error(`Ticket ${ticketId} not found for vendor selection`);
+      console.error(`❌ [VENDOR SELECTION] Ticket ${ticketId} not found for vendor selection`);
       return;
     }
+
+    console.log(`✅ [VENDOR SELECTION] Found ticket: ${ticketId}, category: ${ticket.category}, severity: ${ticket.severity}`);
 
     // Find vendors that handle this category
     const vendors = await prisma.vendor.findMany({
@@ -429,8 +482,10 @@ async function processVendorSelection(ticketId: string) {
       orderBy: { priority: 'asc' },
     });
 
+    console.log(`🔍 [VENDOR SELECTION] Found ${vendors.length} vendors for category: ${ticket.category}`);
+
     if (vendors.length === 0) {
-      console.error(`No vendors found for category: ${ticket.category}`);
+      console.error(`❌ [VENDOR SELECTION] No vendors found for category: ${ticket.category}`);
       await logAudit(ticketId, 'no_vendors_found', { category: ticket.category });
       return;
     }
@@ -440,13 +495,19 @@ async function processVendorSelection(ticketId: string) {
       where: { id: ticketId },
       data: { status: 'vendor_contacting' },
     });
+    
+    console.log(`📞 [VENDOR SELECTION] Updating ticket status to vendor_contacting`);
 
     // Contact vendors in priority order
     for (const vendor of vendors.slice(0, 3)) { // Contact top 3 vendors
       const vendorPhones = JSON.parse(vendor.phones);
-      console.log('vendorPhones', vendorPhones);
+      console.log(`📞 [VENDOR SELECTION] Attempting to call vendor ${vendor.name} (ID: ${vendor.id})`);
+      console.log(`📞 [VENDOR SELECTION] Vendor phone numbers: ${vendorPhones}`);
+      
       if (vendorPhones.length > 0) {
         try {
+          console.log(`📞 [VENDOR SELECTION] Building vendor call URL for ticket ${ticket.id}`);
+          
           // Build URL with ticket info as query params
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
           url.searchParams.set('ticketId', ticket.id);
@@ -455,6 +516,8 @@ async function processVendorSelection(ticketId: string) {
           url.searchParams.set('address', ticket.property.address);
           url.searchParams.set('unit', ticket.property.unit || '');
           url.searchParams.set('window', ticket.window);
+          
+          console.log(`📞 [VENDOR SELECTION] Initiating Twilio call to ${vendorPhones[0]} via URL: ${url.toString()}`);
           
           const call = await twilioClient.calls.create({
             to: vendorPhones[0],
@@ -472,10 +535,12 @@ async function processVendorSelection(ticketId: string) {
             callSid: call.sid,
           });
           
-          console.log(`✅ Call initiated to ${vendor.name}: ${call.sid}`);
+          console.log(`✅ [VENDOR SELECTION] Successfully initiated call to ${vendor.name} - Call SID: ${call.sid}`);
         } catch (callError) {
-          console.error(`Failed to contact vendor ${vendor.name}:`, callError);
+          console.error(`❌ [VENDOR SELECTION] Failed to contact vendor ${vendor.name}:`, callError);
         }
+      } else {
+        console.log(`❌ [VENDOR SELECTION] No phone numbers available for vendor ${vendor.name}`);
       }
     }
   } catch (error) {
