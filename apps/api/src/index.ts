@@ -1132,7 +1132,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
   let callSid: string | null = null;
   let requestCount = 0;
   let lastRequestTime = 0;
-  const MAX_REQUESTS_PER_SECOND = 50;
+  const MAX_REQUESTS_PER_SECOND = 100; // Increased for vendor calls
 
   // Audio / hangup flow control
   let audioStreamingInProgress = false;
@@ -1349,6 +1349,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
             
             oaWs.send(JSON.stringify({ type: 'response.create' }));
           } else if (call.name === 'end_call') {
+            console.log('🔴 end_call triggered by AI (vendor)', args);
             wantHangup = true;
 
             oaWs.send(JSON.stringify({
@@ -1398,7 +1399,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
 
       // Session configured event
       if (evt.type === 'session.updated' || evt.type === 'session.created') {
-        console.log('✅ Vendor session configured');
+        console.log('✅ Vendor session configured', { ticketId, vendorId, category });
         sessionConfigured = true;
         
         if (!oaWsReady) {
@@ -1423,11 +1424,15 @@ Your job is to:
 3. Ask if they can take the job and when they're available
 4. If they accept, use accept_appointment tool with the agreed time
 5. If they decline, use decline_appointment tool with their reason
-6. After finishing, use end_call tool
+6. After finishing the conversation, use end_call tool
 
-Be professional, brief, and clear. If they accept, confirm the appointment time.`
+Be professional, brief, and clear. If they accept, confirm the appointment time. DO NOT call end_call until after you've finished speaking your final goodbye.`
             },
           }));
+          
+          // Trigger the first response so AI starts the conversation
+          console.log('📢 Triggering initial vendor conversation');
+          oaWs.send(JSON.stringify({ type: 'response.create' }));
         }
       }
 
@@ -1488,6 +1493,9 @@ Be professional, brief, and clear. If they accept, confirm the appointment time.
         }
         
         if (requestCount >= MAX_REQUESTS_PER_SECOND) {
+          if (requestCount === MAX_REQUESTS_PER_SECOND) {
+            console.warn(`⚠️ Rate limit exceeded (vendor): ${requestCount} requests, dropping chunks`);
+          }
           return;
         }
         
@@ -1690,6 +1698,44 @@ app.get('/tickets', async (req, res) => {
   } catch (error) {
     console.error('Error fetching tickets:', error);
     res.status(500).json({ error: 'Failed to fetch tickets' });
+  }
+});
+
+// POST /tickets/:id/contact-vendors - Manually trigger vendor calls for a ticket
+app.post('/tickets/:id/contact-vendors', async (req, res) => {
+  try {
+    const { id: ticketId } = req.params;
+
+    // Check if ticket exists
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        tenant: true,
+        property: true,
+      },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Trigger vendor selection process
+    await processVendorSelection(ticketId);
+
+    res.json({
+      success: true,
+      message: 'Vendor calls triggered successfully',
+      ticketId: ticketId,
+      ticket: {
+        id: ticket.id,
+        category: ticket.category,
+        severity: ticket.severity,
+        status: ticket.status,
+      },
+    });
+  } catch (error) {
+    console.error('Error triggering vendor calls:', error);
+    res.status(500).json({ error: 'Failed to trigger vendor calls' });
   }
 });
 
