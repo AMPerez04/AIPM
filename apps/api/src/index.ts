@@ -335,6 +335,7 @@ async function contactEmergencyVendors(ticket: any) {
           // Build URL with ticket info as query params
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
           url.searchParams.set('ticketId', ticket.id);
+          url.searchParams.set('vendorId', vendor.id);
           url.searchParams.set('category', ticket.category);
           url.searchParams.set('description', ticket.description);
           url.searchParams.set('address', ticket.property.address);
@@ -427,6 +428,7 @@ async function initiateVendorCall(ticketId: string) {
     // Build URL with ticket info as query params
     const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
     url.searchParams.set('ticketId', ticketId);
+    url.searchParams.set('vendorId', bestVendor.id);
     url.searchParams.set('category', ticket.category);
     url.searchParams.set('description', ticket.description);
     url.searchParams.set('address', ticket.property.address);
@@ -540,6 +542,7 @@ async function processVendorSelection(ticketId: string) {
           // Build URL with ticket info as query params
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
           url.searchParams.set('ticketId', ticket.id);
+          url.searchParams.set('vendorId', vendor.id);
           url.searchParams.set('category', ticket.category);
           url.searchParams.set('description', ticket.description);
           url.searchParams.set('address', ticket.property.address);
@@ -584,6 +587,10 @@ server.on('upgrade', (req, socket, head) => {
   if (req.url?.startsWith('/ws/twilio-media')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
+    });
+  } else if (req.url?.startsWith('/ws/vendor-media')) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('vendor-connection', ws, req);
     });
   } else {
     socket.destroy();
@@ -1096,6 +1103,438 @@ Be professional, empathetic, and efficient. Confirm only the most important deta
   oaWs.on('error', (e) => console.error('OpenAI WS error', e));
 });
 
+// Vendor call handler (Realtime API)
+wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
+  const sessionId = crypto.randomUUID();
+  console.log('📞 Vendor Twilio WS connected', sessionId);
+
+  // Extract ticket and vendor info from query params
+  const url = new URL(req.url, 'http://localhost');
+  const ticketId = url.searchParams.get('ticketId');
+  const vendorId = url.searchParams.get('vendorId') || url.searchParams.get('ticketId')?.split('_')[0]; // Fallback
+  const category = url.searchParams.get('category');
+  const description = url.searchParams.get('description');
+  const address = url.searchParams.get('address');
+  const unit = url.searchParams.get('unit');
+  const window = url.searchParams.get('window');
+
+  // Create upstream WS to OpenAI Realtime
+  const oaWs = new WebSocket(OPENAI_REALTIME_URL, {
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+  });
+
+  // Session state
+  let oaWsReady = false;
+  let sessionConfigured = false;
+  let streamSid: string | null = null;
+  let callSid: string | null = null;
+  let requestCount = 0;
+  let lastRequestTime = 0;
+  const MAX_REQUESTS_PER_SECOND = 50;
+
+  // Audio / hangup flow control
+  let audioStreamingInProgress = false;
+  let wantHangup = false;
+  let hangupMarkName: string | null = null;
+  let hangupTimer: NodeJS.Timeout | null = null;
+
+  const clearHangupTimer = () => {
+    if (hangupTimer) {
+      clearTimeout(hangupTimer);
+      hangupTimer = null;
+    }
+  };
+
+  const sendTwilioMark = (name: string) => {
+    if (twilioWs.readyState === WebSocket.OPEN && streamSid) {
+      const frame = {
+        event: 'mark',
+        streamSid,
+        mark: { name }
+      };
+      try {
+        twilioWs.send(JSON.stringify(frame));
+        console.log('📍 Sent Twilio mark (vendor):', name);
+      } catch (e) {
+        console.error('❌ Failed to send Twilio mark (vendor)', e);
+      }
+    }
+  };
+
+  const hangupNow = async (reason?: string) => {
+    clearHangupTimer();
+    wantHangup = false;
+    hangupMarkName = null;
+    try {
+      if (callSid) {
+        await twilioClient.calls(callSid).update({ status: 'completed' });
+        console.log('✅ Vendor call ended via REST', { callSid, reason });
+      } else {
+        console.warn('⚠️ No callSid; closing vendor WS to end stream.');
+        try { twilioWs.close(); } catch {}
+      }
+    } catch (e) {
+      console.error('❌ Error ending vendor call via REST:', e);
+      try { twilioWs.close(); } catch {}
+    }
+  };
+
+  oaWs.on('open', () => {
+    console.log('OpenAI Realtime API connected (vendor)');
+    
+    // Set session properties
+    oaWs.send(JSON.stringify({
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        model: 'gpt-realtime',
+        output_modalities: ['audio'],
+        audio: {
+          input: {
+            format: { type: 'audio/pcmu' },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 200,
+              idle_timeout_ms: 8000,
+              create_response: true
+            }
+          },
+          output: {
+            format: { type: 'audio/pcmu' },
+            voice: 'marin'
+          }
+        },
+        tools: [
+          {
+            type: 'function',
+            name: 'accept_appointment',
+            description: 'Accept the appointment with the agreed-upon time and create it in the system.',
+            parameters: {
+              type: 'object',
+              properties: {
+                appointmentTime: {
+                  type: 'string',
+                  description: 'The appointment date and time (e.g., "tomorrow at 2pm", "January 15th at 10am")'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'Any additional notes from the vendor'
+                }
+              },
+              required: ['appointmentTime']
+            }
+          },
+          {
+            type: 'function',
+            name: 'decline_appointment',
+            description: 'Decline the appointment when the vendor cannot take the job.',
+            parameters: {
+              type: 'object',
+              properties: {
+                reason: {
+                  type: 'string',
+                  description: 'The reason for declining'
+                }
+              },
+              required: []
+            }
+          },
+          {
+            type: 'function',
+            name: 'end_call',
+            description: 'End the phone call after finishing the conversation.',
+            parameters: {
+              type: 'object',
+              properties: {
+                reason: { type: 'string', description: 'Short reason for ending the call' }
+              }
+            }
+          }
+        ]
+      },
+    }));
+  });
+
+  // Handle OpenAI messages for vendor calls
+  oaWs.on('message', async (data) => {
+    try {
+      const evt = JSON.parse(data.toString());
+
+      if (evt.type === 'error') {
+        console.error('❌ OpenAI Realtime API Error (vendor):', evt.error);
+        return;
+      }
+
+      // Handle function calls
+      if (evt.type === 'response.output_item.done' && evt.item?.type === 'function_call') {
+        const call = evt.item;
+        
+        try {
+          const args = JSON.parse(call.arguments || '{}');
+          
+          if (call.name === 'accept_appointment') {
+            if (!ticketId) {
+              throw new Error('No ticket ID available');
+            }
+
+            // Parse appointment time (simple default to tomorrow for now)
+            const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+            // Create appointment
+            const appointment = await prisma.appointment.create({
+              data: {
+                ticketId: ticketId,
+                vendorId: vendorId || 'default',
+                startsAt,
+                status: 'confirmed',
+                confirmationMethod: 'voice',
+              },
+            });
+
+            // Update ticket status
+            await prisma.ticket.update({
+              where: { id: ticketId },
+              data: { status: 'scheduled' },
+            });
+
+            // Log audit
+            await logAudit(ticketId, 'appointment_accepted_via_call', {
+              appointmentId: appointment.id,
+              appointmentTime: args.appointmentTime,
+              notes: args.notes,
+            });
+
+            console.log('✅ Appointment accepted via call:', appointment.id);
+
+            oaWs.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({
+                  success: true,
+                  appointmentId: appointment.id,
+                  message: `Appointment confirmed for ${args.appointmentTime}`,
+                })
+              }
+            }));
+            
+            oaWs.send(JSON.stringify({ type: 'response.create' }));
+          } else if (call.name === 'decline_appointment') {
+            if (!ticketId) {
+              throw new Error('No ticket ID available');
+            }
+
+            await logAudit(ticketId, 'appointment_declined_via_call', {
+              reason: args.reason,
+            });
+
+            console.log('❌ Appointment declined:', args.reason);
+
+            oaWs.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({
+                  success: true,
+                  message: 'Appointment declined. We will contact another vendor.',
+                })
+              }
+            }));
+            
+            oaWs.send(JSON.stringify({ type: 'response.create' }));
+          } else if (call.name === 'end_call') {
+            wantHangup = true;
+
+            oaWs.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({ ok: true, reason: args?.reason || 'completed' })
+              }
+            }));
+
+            if (!audioStreamingInProgress && streamSid) {
+              hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
+              sendTwilioMark(hangupMarkName);
+              clearHangupTimer();
+              hangupTimer = setTimeout(() => {
+                if (wantHangup) hangupNow('fallback-timeout-no-audio');
+              }, 5000);
+            } else {
+              clearHangupTimer();
+              hangupTimer = setTimeout(() => {
+                if (wantHangup) hangupNow('fallback-timeout-waiting-audio');
+              }, 7000);
+            }
+          } else {
+            throw new Error(`Unknown function: ${call.name}`);
+          }
+        } catch (err) {
+          console.error('❌ Vendor function call failed:', err);
+          
+          oaWs.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: call.call_id,
+              output: JSON.stringify({ 
+                success: false,
+                error: err instanceof Error ? err.message : 'Unknown error occurred'
+              })
+            }
+          }));
+          
+          oaWs.send(JSON.stringify({ type: 'response.create' }));
+        }
+        return;
+      }
+
+      // Session configured event
+      if (evt.type === 'session.updated' || evt.type === 'session.created') {
+        console.log('✅ Vendor session configured');
+        sessionConfigured = true;
+        
+        if (!oaWsReady) {
+          oaWsReady = true;
+          
+          // Provide system instructions for vendor calls
+          oaWs.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              type: 'realtime',
+              instructions: `You are RelayPM, calling a vendor about a maintenance job.
+
+Job Details:
+- Issue Type: ${category || 'maintenance'}
+- Property: ${address || 'unknown'}${unit ? `, Unit ${unit}` : ''}
+- Problem: ${description || 'N/A'}
+- Preferred Window: ${window || 'as soon as possible'}
+
+Your job is to:
+1. Greet the vendor professionally
+2. Briefly explain the job details
+3. Ask if they can take the job and when they're available
+4. If they accept, use accept_appointment tool with the agreed time
+5. If they decline, use decline_appointment tool with their reason
+6. After finishing, use end_call tool
+
+Be professional, brief, and clear. If they accept, confirm the appointment time.`
+            },
+          }));
+        }
+      }
+
+      // Handle audio output
+      if (evt.type === 'response.output_audio.delta' && evt.delta && streamSid) {
+        const frame = {
+          event: 'media',
+          streamSid: streamSid,
+          media: {
+            payload: evt.delta
+          }
+        };
+        audioStreamingInProgress = true;
+        try {
+          twilioWs.send(JSON.stringify(frame));
+        } catch (e) {
+          console.error('❌ Error forwarding audio to Twilio (vendor):', e);
+        }
+      }
+
+      if (evt.type === 'response.output_audio.done') {
+        audioStreamingInProgress = false;
+
+        if (wantHangup && streamSid && !hangupMarkName) {
+          hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
+          sendTwilioMark(hangupMarkName);
+          clearHangupTimer();
+          hangupTimer = setTimeout(() => {
+            if (wantHangup) hangupNow('fallback-timeout-after-done');
+          }, 5000);
+        }
+      }
+
+      if (evt.type === 'response.output_audio_transcript.delta') {
+        console.log('🗣️ Agent speaking (vendor):', evt.delta);
+      }
+    } catch (e) {
+      console.error('OpenAI WS parse error (vendor)', e);
+    }
+  });
+
+  // Pipe Twilio -> OpenAI (vendor audio)
+  twilioWs.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+
+      if (msg.event === 'start') {
+        streamSid = msg.start?.streamSid ?? msg.streamSid ?? streamSid;
+        callSid = msg.start?.callSid ?? callSid ?? null;
+        console.log('Vendor Twilio stream started', { streamSid, callSid, sessionId });
+      }
+
+      if (msg.event === 'media' && msg.media?.payload && oaWsReady && sessionConfigured && oaWs.readyState === WebSocket.OPEN) {
+        const now = Date.now();
+        if (now - lastRequestTime >= 1000) {
+          requestCount = 0;
+          lastRequestTime = now;
+        }
+        
+        if (requestCount >= MAX_REQUESTS_PER_SECOND) {
+          return;
+        }
+        
+        requestCount++;
+        
+        try {
+          oaWs.send(JSON.stringify({
+            type: 'input_audio_buffer.append',
+            audio: msg.media.payload,
+          }));
+        } catch (sendError) {
+          console.error('❌ Error sending vendor audio chunk:', sendError);
+        }
+      }
+
+      if (msg.event === 'mark') {
+        const name = msg.mark?.name;
+        console.log('📍 Twilio mark echoed (vendor):', name);
+        if (wantHangup && hangupMarkName && name === hangupMarkName) {
+          hangupNow('mark-ack');
+        }
+      }
+
+      if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
+        if (requestCount > 0) {
+          console.log(`📤 Committing vendor audio buffer with ${requestCount} chunks`);
+          oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        }
+      }
+    } catch (e) {
+      console.error('Twilio WS parse error (vendor)', e);
+    }
+  });
+
+  // Clean up
+  const shutdown = () => {
+    console.log(`📊 Final vendor request count for session ${sessionId}: ${requestCount} requests`);
+    clearHangupTimer();
+    try { oaWs.close(); } catch {}
+    try { twilioWs.close(); } catch {}
+    console.log('🔌 Vendor WS closed', sessionId);
+  };
+  twilioWs.on('close', shutdown);
+  oaWs.on('close', shutdown);
+  oaWs.on('error', (e) => console.error('OpenAI WS error (vendor)', e));
+});
+
 // Health check endpoints
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -1378,6 +1817,7 @@ app.post('/vendors/:id/ping', async (req, res) => {
         // Build URL with ticket info as query params
         const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
         url.searchParams.set('ticketId', ticket.id);
+        url.searchParams.set('vendorId', vendorId);
         url.searchParams.set('category', ticket.category);
         url.searchParams.set('description', ticket.description);
         url.searchParams.set('address', ticket.property.address);
@@ -2043,8 +2483,7 @@ app.post('/webhooks/call', (req, res) => {
 });
 
 
-// POST /webhooks/vendor-call - Handles Twilio callback when vendor answers
-app.post('/webhooks/vendor-call', (req, res) => {
+app.post('/webhooks/vendor-call-alt', (req, res) => {
   // Get ticket info from request params (passed when creating the call)
   const { ticketId, category, description, address, unit, window } = req.query;
   
@@ -2081,6 +2520,40 @@ app.post('/webhooks/vendor-call', (req, res) => {
   // If no response, say goodbye
   vr.say('Thank you for your response. Goodbye.');
   vr.hangup();
+  
+  res.type('text/xml').send(vr.toString());
+});
+
+// POST /webhooks/vendor-call - Handles Twilio callback when vendor answers
+app.post('/webhooks/vendor-call', (req, res) => {
+  // Get ticket info from request params (passed when creating the call)
+  const { ticketId, vendorId, category, description, address, unit, window } = req.query;
+  
+  // Check if BASE_URL is set before using it
+  if (!process.env.BASE_URL) {
+    const vr = new twilio.twiml.VoiceResponse();
+    vr.say('Error: BASE_URL not configured. Goodbye.');
+    res.type('text/xml').send(vr.toString());
+    return;
+  }
+  
+  const vr = new twilio.twiml.VoiceResponse();
+  const connect = vr.connect();
+  
+  // Build WebSocket URL with ticket info as query params
+  const wsUrl = new URL(`${process.env.BASE_URL}/ws/vendor-media`);
+  wsUrl.searchParams.set('ticketId', ticketId as string);
+  if (vendorId) wsUrl.searchParams.set('vendorId', vendorId as string);
+  wsUrl.searchParams.set('category', category as string);
+  wsUrl.searchParams.set('description', description as string);
+  wsUrl.searchParams.set('address', address as string);
+  if (unit) wsUrl.searchParams.set('unit', unit as string);
+  wsUrl.searchParams.set('window', window as string);
+  
+  connect.stream({
+    url: wsUrl.toString(),
+    track: 'inbound_track'
+  });
   
   res.type('text/xml').send(vr.toString());
 });
