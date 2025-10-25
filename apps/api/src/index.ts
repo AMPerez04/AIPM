@@ -360,12 +360,10 @@ wss.on('connection', async (twilioWs: WebSocket) => {
         model: 'gpt-realtime',
         audio: {
           input: {
-            format: 'g711_ulaw',
-            sample_rate: 8000
+            format: 'g711_ulaw'
           },
           output: {
             format: 'g711_ulaw',
-            sample_rate: 8000,
             voice: 'verse'
           }
         }
@@ -477,8 +475,13 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
         }));
       }
       if (msg.event === 'stop' && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
-        // flush any remaining audio to OpenAI to prompt a response
-        oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        // Only commit if we have audio data (at least 100ms)
+        if (requestCount > 0) {
+          console.log(`📤 Committing audio buffer with ${requestCount} chunks`);
+          oaWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        } else {
+          console.warn('⚠️ No audio data to commit, skipping');
+        }
       }
     } catch (e) {
       console.error('Twilio WS parse error', e);
