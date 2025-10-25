@@ -138,7 +138,7 @@ The web app expects the following API endpoints:
 Create a `.env.local` file:
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
 ```
 
 ## Tech Stack
