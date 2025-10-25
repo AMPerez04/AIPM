@@ -326,6 +326,12 @@ async function contactEmergencyVendors(ticket: any) {
       const vendorPhones = JSON.parse(vendor.phones);
       if (vendorPhones.length > 0) {
         try {
+          // Check if BASE_URL is set
+          if (!process.env.BASE_URL) {
+            console.error(`❌ BASE_URL environment variable is not set. Cannot contact emergency vendors.`);
+            continue;
+          }
+          
           // Build URL with ticket info as query params
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
           url.searchParams.set('ticketId', ticket.id);
@@ -411,6 +417,12 @@ async function initiateVendorCall(ticketId: string) {
 
     // Make outbound call to vendor
     console.log(`📞 Initiating call to vendor ${bestVendor.name} at ${vendorPhones[0]} for ticket ${ticketId}`);
+    
+    // Check if BASE_URL is set
+    if (!process.env.BASE_URL) {
+      console.error(`❌ BASE_URL environment variable is not set. Cannot make vendor calls.`);
+      throw new Error('BASE_URL environment variable is required but not set');
+    }
     
     // Build URL with ticket info as query params
     const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
@@ -512,6 +524,18 @@ async function processVendorSelection(ticketId: string) {
       if (vendorPhones.length > 0) {
         try {
           console.log(`📞 [VENDOR SELECTION] Building vendor call URL for ticket ${ticket.id}`);
+          
+          // Check if BASE_URL is set
+          if (!process.env.BASE_URL) {
+            console.error(`❌ [VENDOR SELECTION] BASE_URL environment variable is not set. Cannot make vendor calls.`);
+            console.error(`❌ [VENDOR SELECTION] Please set BASE_URL in your environment variables.`);
+            await logAudit(ticketId, 'vendor_call_failed', {
+              reason: 'BASE_URL not set',
+              vendorId: vendor.id,
+              vendorName: vendor.name,
+            });
+            continue;
+          }
           
           // Build URL with ticket info as query params
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
@@ -1345,6 +1369,12 @@ app.post('/vendors/:id/ping', async (req, res) => {
     // Make outbound call to vendor
     if (vendorPhones.length > 0) {
       try {
+        // Check if BASE_URL is set
+        if (!process.env.BASE_URL) {
+          console.error(`❌ BASE_URL environment variable is not set. Cannot ping vendor.`);
+          return res.status(500).json({ error: 'BASE_URL environment variable is required but not set' });
+        }
+        
         // Build URL with ticket info as query params
         const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
         url.searchParams.set('ticketId', ticket.id);
@@ -2033,6 +2063,13 @@ app.post('/webhooks/vendor-call', (req, res) => {
   vr.say('Thank you. Press 1 to accept this appointment. Press 2 to decline.');
   
   // Use <Gather> to capture vendor's response
+  // Check if BASE_URL is set before using it
+  if (!process.env.BASE_URL) {
+    vr.say('Error: BASE_URL not configured. Goodbye.');
+    res.type('text/xml').send(vr.toString());
+    return;
+  }
+  
   const gather = vr.gather({
     numDigits: 1,
     action: `${process.env.BASE_URL}/webhooks/vendor-response?ticketId=${ticketId}`,
