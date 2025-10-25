@@ -345,6 +345,9 @@ wss.on('connection', async (twilioWs: WebSocket) => {
   // When OpenAI is ready, send session config + your instructions
   let oaWsReady = false;
   let sessionConfigured = false;
+  let requestCount = 0;
+  let lastRequestTime = 0;
+  const MAX_REQUESTS_PER_SECOND = 50; // Rate limiting
   
   oaWs.on('open', () => {
     console.log('OpenAI Realtime API connected');
@@ -376,6 +379,14 @@ wss.on('connection', async (twilioWs: WebSocket) => {
       const evt = JSON.parse(data.toString());
       console.log('📩 OpenAI event:', evt.type);
       
+      // Handle error events
+      if (evt.type === 'error') {
+        console.error('❌ OpenAI Realtime API Error:', evt.error);
+        console.error('❌ Error details:', JSON.stringify(evt, null, 2));
+        // Optionally handle the error (reconnect, notify user, etc.)
+        return;
+      }
+
       // Log session events
       if (evt.type === 'session.updated' || evt.type === 'session.created') {
         console.log('✅ Session configured:', evt.session);
@@ -439,6 +450,25 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
         console.log('Twilio stream started', msg.streamSid);
       }
       if (msg.event === 'media' && msg.media?.payload && oaWsReady && oaWs.readyState === WebSocket.OPEN) {
+        // Rate limiting to prevent excessive requests
+        const now = Date.now();
+        if (now - lastRequestTime >= 1000) { // Reset counter every second
+          requestCount = 0;
+          lastRequestTime = now;
+        }
+        
+        if (requestCount >= MAX_REQUESTS_PER_SECOND) {
+          console.warn(`⚠️ Rate limit exceeded: ${requestCount} requests in last second. Dropping audio chunk.`);
+          return;
+        }
+        
+        requestCount++;
+        
+        // Debug logging for request tracking
+        if (requestCount % 10 === 0) {
+          console.log(`📊 Audio requests sent: ${requestCount} (session: ${sessionId})`);
+        }
+        
         // msg.media.payload = base64 μ-law 8k
         // Send to OpenAI as an audio append
         oaWs.send(JSON.stringify({
@@ -457,6 +487,7 @@ IMPORTANT: Start the conversation immediately with a greeting. Say hello and int
 
   // Clean up
   const shutdown = () => {
+    console.log(`📊 Final request count for session ${sessionId}: ${requestCount} requests`);
     try { oaWs.close(); } catch {}
     try { twilioWs.close(); } catch {}
     console.log('🔌 WS closed', sessionId);
