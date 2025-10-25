@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import VendorForm from "./VendorForm";
 import { vendorsApi } from "@/lib/api";
 
@@ -16,6 +17,22 @@ interface Vendor {
   rating?: number;
   status?: "active" | "inactive";
   address?: string;
+  spendingLimit?: number;
+  totalSpent?: number;
+  jobHistory?: JobHistory[];
+  lastUsed?: string;
+}
+
+interface JobHistory {
+  id: string;
+  vendorId: string;
+  ticketId: string;
+  propertyId: string;
+  jobType: string;
+  amount: number;
+  status: 'completed' | 'pending' | 'cancelled';
+  completedAt?: string;
+  notes?: string;
 }
 
 export default function VendorList() {
@@ -25,7 +42,7 @@ export default function VendorList() {
   const [showForm, setShowForm] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterCategory, setFilterCategory] = useState("all");
+  const [filterSpecialty, setFilterSpecialty] = useState("all");
 
   const fetchVendors = async () => {
     try {
@@ -42,27 +59,81 @@ export default function VendorList() {
           id: "v_1",
           name: "Acme Plumbing",
           phones: ["+1 (555) 123-4567", "+1 (555) 123-4568"],
-          specialties: ["emergency", "repairs", "installation"],
+          specialties: ["plumbing"],
           hours: "24/7 Emergency Service",
           priority: 1,
           notes: "prefers SMS, fastest response time",
           category: "plumbing",
           rating: 4.8,
           status: "active",
-          address: "123 Main St, City, State"
+          address: "123 Main St, City, State",
+          spendingLimit: 2000,
+          totalSpent: 1250,
+          lastUsed: "2024-01-15",
+          jobHistory: [
+            {
+              id: "job_1",
+              vendorId: "v_1",
+              ticketId: "t_1",
+              propertyId: "prop_1",
+              jobType: "Sink Repair",
+              amount: 350,
+              status: "completed",
+              completedAt: "2024-01-15T14:30:00Z",
+              notes: "Fixed leaky faucet and replaced gasket"
+            },
+            {
+              id: "job_2",
+              vendorId: "v_1",
+              ticketId: "t_2",
+              propertyId: "prop_2",
+              jobType: "Pipe Replacement",
+              amount: 900,
+              status: "completed",
+              completedAt: "2024-01-10T10:15:00Z",
+              notes: "Replaced corroded pipe under kitchen sink"
+            }
+          ]
         },
         {
           id: "v_2",
           name: "Quick Fix Electric",
           phones: ["+1 (555) 987-6543"],
-          specialties: ["wiring", "outlets", "emergency"],
+          specialties: ["electrical"],
           hours: "Mon-Fri 8AM-6PM",
           priority: 2,
           notes: "licensed electrician, good for emergencies",
           category: "electrical",
           rating: 4.6,
           status: "active",
-          address: "456 Electric Ave, City, State"
+          address: "456 Electric Ave, City, State",
+          spendingLimit: 1500,
+          totalSpent: 800,
+          lastUsed: "2024-01-12",
+          jobHistory: [
+            {
+              id: "job_3",
+              vendorId: "v_2",
+              ticketId: "t_3",
+              propertyId: "prop_1",
+              jobType: "Outlet Repair",
+              amount: 200,
+              status: "completed",
+              completedAt: "2024-01-12T16:45:00Z",
+              notes: "Fixed loose outlet in kitchen"
+            },
+            {
+              id: "job_4",
+              vendorId: "v_2",
+              ticketId: "t_4",
+              propertyId: "prop_3",
+              jobType: "Light Fixture Installation",
+              amount: 600,
+              status: "completed",
+              completedAt: "2024-01-08T11:20:00Z",
+              notes: "Installed new ceiling fan in living room"
+            }
+          ]
         },
         {
           id: "v_3",
@@ -120,8 +191,21 @@ export default function VendorList() {
         setVendors(vendors.map(v => v.id === editingVendor.id ? { ...v, ...vendorData } : v));
       } else {
         // Create new vendor
-        const newVendor = await vendorsApi.create(vendorData);
-        setVendors([...vendors, newVendor]);
+        try {
+          const newVendor = await vendorsApi.create(vendorData);
+          setVendors([...vendors, newVendor]);
+        } catch (apiError) {
+          // If API fails, create a mock vendor for development
+          console.warn("API create failed, using mock data:", apiError);
+          const mockVendor: Vendor = {
+            id: `v_${Date.now()}`, // Generate unique ID
+            ...vendorData,
+            rating: 0,
+            status: "active" as const,
+            address: ""
+          };
+          setVendors([...vendors, mockVendor]);
+        }
       }
       setShowForm(false);
       setEditingVendor(null);
@@ -134,9 +218,10 @@ export default function VendorList() {
   const filteredVendors = vendors.filter(vendor => {
     const matchesSearch = searchTerm === "" || 
       vendor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vendor.specialties.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesCategory = filterCategory === "all" || vendor.category === filterCategory;
-    return matchesSearch && matchesCategory;
+      vendor.specialties?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()));
+    const matchesSpecialty = filterSpecialty === "all" || 
+      vendor.specialties?.some(s => s.toLowerCase() === filterSpecialty.toLowerCase());
+    return matchesSearch && matchesSpecialty;
   });
 
   if (loading) {
@@ -196,18 +281,18 @@ export default function VendorList() {
             placeholder="Search vendors..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors w-64"
+            className="px-4 py-2 border text-gray-900 border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors w-64"
           />
           <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+            value={filterSpecialty}
+            onChange={(e) => setFilterSpecialty(e.target.value)}
+            className="px-4 py-2 border text-gray-900 border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
           >
-            <option value="all">All Categories</option>
+            <option value="all">All Specialties</option>
             <option value="plumbing">Plumbing</option>
             <option value="electrical">Electrical</option>
             <option value="hvac">HVAC</option>
-            <option value="general">General</option>
+            <option value="lock">Lock</option>
           </select>
           <button 
             onClick={fetchVendors}
@@ -235,8 +320,15 @@ export default function VendorList() {
             {searchTerm ? "No vendors match your search" : "No vendors found"}
           </div>
         ) : (
-          filteredVendors.map((vendor) => (
-            <div key={vendor.id} className="p-6 hover:bg-gray-50 transition-colors">
+          filteredVendors.map((vendor, index) => (
+            <motion.div 
+              key={vendor.id} 
+              className="p-6 hover:bg-gray-50 transition-colors"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: index * 0.1 }}
+              whileHover={{ scale: 1.01 }}
+            >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center space-x-3 mb-2">
@@ -263,7 +355,7 @@ export default function VendorList() {
                       <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                       </svg>
-                      <span>{vendor.phones.join(", ")}</span>
+                      <span>{vendor.phones?.join(", ") || "No phone numbers"}</span>
                     </div>
                     {vendor.address && (
                       <div className="flex items-center space-x-2 text-sm text-gray-600">
@@ -277,14 +369,14 @@ export default function VendorList() {
                   </div>
 
                   <div className="flex flex-wrap gap-2 mb-3">
-                    {vendor.specialties.map((specialty) => (
+                    {vendor.specialties?.map((specialty) => (
                       <span
                         key={specialty}
                         className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium"
                       >
                         {specialty}
                       </span>
-                    ))}
+                    )) || <span className="text-gray-500 text-sm">No specialties listed</span>}
                   </div>
 
                   <div className="flex items-center space-x-4 text-sm text-gray-600">
@@ -294,6 +386,64 @@ export default function VendorList() {
                       <span className="capitalize">📂 {vendor.category}</span>
                     )}
                   </div>
+
+                  {/* Spending Information */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-lg font-semibold text-gray-900">
+                        ${vendor.totalSpent || 0}
+                      </div>
+                      <div className="text-xs text-gray-600">Total Spent</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-semibold text-gray-900">
+                        ${vendor.spendingLimit || 0}
+                      </div>
+                      <div className="text-xs text-gray-600">Monthly Limit</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-semibold text-gray-900">
+                        {vendor.jobHistory?.length || 0}
+                      </div>
+                      <div className="text-xs text-gray-600">Jobs Completed</div>
+                    </div>
+                  </div>
+
+                  {/* Job History */}
+                  {vendor.jobHistory && vendor.jobHistory.length > 0 && (
+                    <div className="mt-3">
+                      <h4 className="text-sm font-medium text-gray-800 mb-2">Recent Jobs:</h4>
+                      <div className="space-y-2">
+                        {vendor.jobHistory.slice(0, 3).map((job) => (
+                          <div key={job.id} className="bg-white p-2 rounded border text-xs">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="font-medium text-gray-800">{job.jobType}</span>
+                                <div className="text-gray-600">${job.amount}</div>
+                              </div>
+                              <span className={`px-2 py-1 rounded text-xs ${
+                                job.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                job.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {job.status}
+                              </span>
+                            </div>
+                            {job.completedAt && (
+                              <div className="text-gray-500 mt-1">
+                                {new Date(job.completedAt).toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {vendor.jobHistory.length > 3 && (
+                          <div className="text-xs text-gray-500 text-center">
+                            +{vendor.jobHistory.length - 3} more jobs
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {vendor.notes && (
                     <p className="text-sm text-gray-600 mt-2 bg-gray-50 p-2 rounded">
@@ -320,7 +470,7 @@ export default function VendorList() {
                   </button>
                 </div>
               </div>
-            </div>
+            </motion.div>
           ))
         )}
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import TicketCard from "./TicketCard";
 import { ticketsApi } from "@/lib/api";
 
@@ -203,12 +204,19 @@ export default function TicketList({ onSelectTicket }: TicketListProps) {
             {searchTerm ? "No tickets match your search" : "No service requests found"}
           </div>
         ) : (
-          filteredTickets.map((ticket) => (
-            <TicketCard
+          filteredTickets.map((ticket, index) => (
+            <motion.div
               key={ticket.id}
-              ticket={ticket}
-              onClick={() => onSelectTicket(ticket.id)}
-            />
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: index * 0.1 }}
+              whileHover={{ scale: 1.01 }}
+            >
+              <TicketCard
+                ticket={ticket}
+                onClick={() => onSelectTicket(ticket.id)}
+              />
+            </motion.div>
           ))
         )}
       </div>

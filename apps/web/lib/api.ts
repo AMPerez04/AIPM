@@ -66,6 +66,76 @@ export const vendorsApi = {
   },
 };
 
+export const propertiesApi = {
+  // GET /properties
+  getAll: async () => {
+    const response = await api.get("/properties");
+    return response.data;
+  },
+
+  // POST /properties
+  create: async (data: Record<string, unknown>) => {
+    const response = await api.post("/properties", data);
+    return response.data;
+  },
+
+  // GET /properties/:id
+  getById: async (id: string) => {
+    const response = await api.get(`/properties/${id}`);
+    return response.data;
+  },
+
+  // PUT /properties/:id
+  update: async (id: string, data: Record<string, unknown>) => {
+    const response = await api.put(`/properties/${id}`, data);
+    return response.data;
+  },
+
+  // DELETE /properties/:id
+  delete: async (id: string) => {
+    const response = await api.delete(`/properties/${id}`);
+    return response.data;
+  },
+};
+
+export const tenantsApi = {
+  // GET /tenants
+  getAll: async () => {
+    const response = await api.get("/tenants");
+    return response.data;
+  },
+
+  // POST /tenants
+  create: async (data: Record<string, unknown>) => {
+    const response = await api.post("/tenants", data);
+    return response.data;
+  },
+
+  // POST /tenants-with-property
+  createWithProperty: async (data: Record<string, unknown>) => {
+    const response = await api.post("/tenants-with-property", data);
+    return response.data;
+  },
+
+  // GET /tenants/:id
+  getById: async (id: string) => {
+    const response = await api.get(`/tenants/${id}`);
+    return response.data;
+  },
+
+  // PUT /tenants/:id
+  update: async (id: string, data: Record<string, unknown>) => {
+    const response = await api.put(`/tenants/${id}`, data);
+    return response.data;
+  },
+
+  // DELETE /tenants/:id
+  delete: async (id: string) => {
+    const response = await api.delete(`/tenants/${id}`);
+    return response.data;
+  },
+};
+
 export const notifyApi = {
   // POST /notify
   send: async (data: Record<string, unknown>) => {

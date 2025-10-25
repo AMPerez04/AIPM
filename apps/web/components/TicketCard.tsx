@@ -1,5 +1,7 @@
 "use client";
 
+import { motion } from "motion/react";
+
 // TODO: Display all ticket fields properly
 // TODO: Add status badge colors
 // TODO: Add emergency indicator
@@ -49,13 +51,15 @@ export default function TicketCard({ ticket, onClick }: TicketCardProps) {
   };
 
   return (
-    <div
+    <motion.div
       onClick={onClick}
       className={`p-6 hover:bg-gray-50 cursor-pointer transition-colors border-l-4 ${
         ticket.severity === "emergency" 
           ? "border-red-400 hover:border-red-300" 
           : "border-transparent hover:border-blue-200"
       }`}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.99 }}
     >
       <div className="flex items-start justify-between">
         <div className="flex-1">
@@ -124,7 +128,7 @@ export default function TicketCard({ ticket, onClick }: TicketCardProps) {
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
