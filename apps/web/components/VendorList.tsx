@@ -112,7 +112,7 @@ export default function VendorList() {
     }
   };
 
-  const handleSave = async (vendorData: any) => {
+  const handleSave = async (vendorData: Omit<Vendor, 'id'>) => {
     try {
       if (editingVendor) {
         // Update existing vendor

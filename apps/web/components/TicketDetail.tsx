@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Timeline from "./Timeline";
 import { ticketsApi } from "@/lib/api";
 
@@ -9,20 +9,31 @@ interface TicketDetailProps {
   onClose: () => void;
 }
 
-export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
-  const [ticket, setTicket] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface Ticket {
+  id: string;
+  tenantId: string;
+  propertyId: string;
+  category: string;
+  severity: string;
+  description: string;
+  window: string;
+  status: string;
+  createdAt: string;
+  tenantPhone: string;
+  propertyAddress: string;
+}
 
-  const fetchTicketDetails = async () => {
+export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchTicketDetails = useCallback(async () => {
     try {
       setLoading(true);
-      setError(null);
       const data = await ticketsApi.getById(ticketId);
       setTicket(data);
     } catch (err) {
       console.error("Failed to fetch ticket details:", err);
-      setError("Failed to load ticket details. Please try again.");
       // Fallback to mock data for development
       setTicket({
         id: ticketId,
@@ -40,11 +51,11 @@ export default function TicketDetail({ ticketId, onClose }: TicketDetailProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [ticketId]);
 
   useEffect(() => {
     fetchTicketDetails();
-  }, [ticketId]);
+  }, [fetchTicketDetails]);
 
   if (loading) {
     return (

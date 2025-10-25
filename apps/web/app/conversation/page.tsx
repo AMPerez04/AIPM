@@ -10,14 +10,7 @@ interface Message {
   timestamp: string;
 }
 
-export default function ConversationPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
-  const [isTenantTyping, setIsTenantTyping] = useState(false);
-  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
-  const [conversationComplete, setConversationComplete] = useState(false);
-
-  const conversationData: Message[] = [
+const conversationData: Message[] = [
     {
       id: 1,
       sender: 'ai',
@@ -78,7 +71,14 @@ export default function ConversationPage() {
       text: "You're very welcome! I'm here 24/7 whenever you need assistance. You'll receive a text with appointment details shortly. Have a great day!",
       timestamp: "2:38 PM"
     }
-  ];
+];
+
+export default function ConversationPage() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isTyping, setIsTyping] = useState(false);
+  const [isTenantTyping, setIsTenantTyping] = useState(false);
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
+  const [conversationComplete, setConversationComplete] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => {

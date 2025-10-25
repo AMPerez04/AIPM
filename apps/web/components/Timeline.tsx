@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ticketsApi } from "@/lib/api";
 
 interface TimelineEvent {
@@ -8,7 +8,7 @@ interface TimelineEvent {
   type: string;
   timestamp: string;
   description: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 interface TimelineProps {
@@ -20,7 +20,7 @@ export default function Timeline({ ticketId }: TimelineProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchTimeline = async () => {
+  const fetchTimeline = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -77,11 +77,11 @@ export default function Timeline({ ticketId }: TimelineProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [ticketId]);
 
   useEffect(() => {
     fetchTimeline();
-  }, [ticketId]);
+  }, [fetchTimeline]);
 
   const getEventIcon = (type: string) => {
     switch (type) {
@@ -160,7 +160,7 @@ export default function Timeline({ ticketId }: TimelineProps) {
           {/* Timeline line */}
           <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200"></div>
           
-          {events.map((event, index) => (
+          {events.map((event) => (
             <div key={event.id} className="relative flex items-start space-x-4 pb-6">
               {/* Event icon */}
               <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${getEventColor(event.type)}`}>

@@ -34,7 +34,7 @@ export const ticketsApi = {
   },
 
   // POST /tickets
-  create: async (data: any) => {
+  create: async (data: Record<string, unknown>) => {
     const response = await api.post("/tickets", data);
     return response.data;
   },
@@ -48,13 +48,13 @@ export const vendorsApi = {
   },
 
   // POST /vendors
-  create: async (data: any) => {
+  create: async (data: Record<string, unknown>) => {
     const response = await api.post("/vendors", data);
     return response.data;
   },
 
   // PUT /vendors/:id
-  update: async (id: string, data: any) => {
+  update: async (id: string, data: Record<string, unknown>) => {
     const response = await api.put(`/vendors/${id}`, data);
     return response.data;
   },
@@ -68,7 +68,7 @@ export const vendorsApi = {
 
 export const notifyApi = {
   // POST /notify
-  send: async (data: any) => {
+  send: async (data: Record<string, unknown>) => {
     const response = await api.post("/notify", data);
     return response.data;
   },

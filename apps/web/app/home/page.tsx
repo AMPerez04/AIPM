@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
 
@@ -10,7 +10,7 @@ export default function HomePage() {
   const [isTyping, setIsTyping] = useState(false);
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
 
-  const steps = [
+  const steps = useMemo(() => [
     {
       title: "Tenant Call",
       content: "Hello, my air conditioning isn't working. It's been really hot and I can't get it to turn on.",
@@ -56,9 +56,9 @@ export default function HomePage() {
       textColor: "text-green-800",
       keyActions: ["Appointment confirmed", "Technician assigned", "SMS sent"]
     }
-  ];
+  ], []);
 
-  const testimonials = [
+  const testimonials = useMemo(() => [
     {
       quote: "Properly has completely changed how I handle maintenance requests. I used to get calls at all hours — now the AI takes care of everything, and I only get notified once it’s booked. It saves me hours every week and keeps tenants happier.",
       author: "Michael R.",
@@ -83,7 +83,7 @@ export default function HomePage() {
       role: "Operations Lead, Skyline Property Group",
       icon: "💬"
     }
-  ];
+  ], []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -91,7 +91,7 @@ export default function HomePage() {
     }, 8000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [steps.length]);
 
   // Typing effect for text
   useEffect(() => {
@@ -111,7 +111,7 @@ export default function HomePage() {
     }, 50);
 
     return () => clearInterval(typingTimer);
-  }, [currentStep]);
+  }, [currentStep, steps]);
 
   const nextTestimonial = () => {
     setCurrentTestimonial(prev => (prev + 1) % testimonials.length);
@@ -394,7 +394,7 @@ export default function HomePage() {
               <div className="bg-white p-8 rounded-lg shadow-lg">
                 <div className="text-5xl mb-4">{testimonials[currentTestimonial].icon}</div>
                 <p className="text-xl text-gray-700 mb-6">
-                  "{testimonials[currentTestimonial].quote}"
+                  &ldquo;{testimonials[currentTestimonial].quote}&rdquo;
                 </p>
                 <div className="font-semibold text-gray-900">
                   {testimonials[currentTestimonial].author}
@@ -503,7 +503,7 @@ export default function HomePage() {
               Ready to Transform Your Property Management?
             </h2>
             <p className="text-xl mb-8 text-blue-200">
-              Join property owners who've already eliminated the hassle of tenant calls
+              Join property owners who&apos;ve already eliminated the hassle of tenant calls
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link 
