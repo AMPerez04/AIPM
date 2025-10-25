@@ -578,7 +578,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               type: 'audio/pcmu'
             },
             turn_detection: {
-              type: 'semantic_vad',
+              type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
               silence_duration_ms: 200,
@@ -793,7 +793,7 @@ Your job is to:
 5. Book an approved vendor for the requested time window
 6. Confirm appointment details with the tenant
 7. Notify the landlord via SMS
-8. Hang up after the caller confirms the important detailsare correct
+8. Hang up after the caller confirms the important details are correct
 
 Be professional, empathetic, and efficient. Confirm all details clearly before ending the call.
 
