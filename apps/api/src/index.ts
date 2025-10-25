@@ -44,6 +44,18 @@ const prisma = new PrismaClient();
 // Initialize Twilio client
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
+// Session store for vendor calls (to pass data from HTTP webhook to WebSocket)
+interface VendorCallSession {
+  ticketId: string | null;
+  vendorId: string | null;
+  category: string | null;
+  description: string | null;
+  address: string | null;
+  unit: string | null;
+  window: string | null;
+}
+const vendorCallSessions = new Map<string, VendorCallSession>();
+
 // Configure CORS - allow all origins for development
 app.use(cors({
   origin: '*', // Allow all origins
@@ -1105,19 +1117,59 @@ Be professional, empathetic, and efficient. Confirm only the most important deta
 
 // Vendor call handler (Realtime API)
 wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
-  const sessionId = crypto.randomUUID();
-  console.log('📞 [VENDOR] Twilio WS connected', sessionId);
+  const twilioWsId = crypto.randomUUID();
+  console.log('📞 [VENDOR] Twilio WS connected', twilioWsId);
   console.log('📞 [VENDOR] Request URL:', req.url);
 
-  // Extract ticket and vendor info from query params
-  const url = new URL(req.url, 'http://localhost');
-  const ticketId = url.searchParams.get('ticketId');
-  const vendorId = url.searchParams.get('vendorId') || url.searchParams.get('ticketId')?.split('_')[0]; // Fallback
-  const category = url.searchParams.get('category');
-  const description = url.searchParams.get('description');
-  const address = url.searchParams.get('address');
-  const unit = url.searchParams.get('unit');
-  const window = url.searchParams.get('window');
+  // Extract vendor call data from path - format: /ws/vendor-media/{sessionId}
+  let ticketId = null;
+  let vendorId = null;
+  let category = null;
+  let description = null;
+  let address = null;
+  let unit = null;
+  let window = null;
+  let sessionId = null;
+
+  try {
+    // Extract session ID from path
+    const pathMatch = req.url?.match(/\/ws\/vendor-media\/([^\/]+)/);
+    if (pathMatch && pathMatch[1]) {
+      sessionId = pathMatch[1];
+      console.log('📞 [VENDOR] Extracted session ID from path:', sessionId);
+      
+      // Look up vendor call data from session store
+      const sessionData = vendorCallSessions.get(sessionId);
+      if (sessionData) {
+        ticketId = sessionData.ticketId;
+        vendorId = sessionData.vendorId;
+        category = sessionData.category;
+        description = sessionData.description;
+        address = sessionData.address;
+        unit = sessionData.unit;
+        window = sessionData.window;
+        
+        console.log('📞 [VENDOR] Loaded session data:', {
+          sessionId,
+          ticketId,
+          vendorId,
+          category,
+          address,
+          unit
+        });
+        
+        // Clean up session data after loading (optional - keep for debugging)
+        // vendorCallSessions.delete(sessionId);
+      } else {
+        console.error('❌ [VENDOR] No session data found for session ID:', sessionId);
+      }
+    } else {
+      console.error('❌ [VENDOR] Could not extract session ID from URL:', req.url);
+    }
+  } catch (e) {
+    console.error('❌ [VENDOR] Error parsing URL:', e);
+    console.error('❌ [VENDOR] req.url was:', req.url);
+  }
 
   // Create upstream WS to OpenAI Realtime
   const oaWs = new WebSocket(OPENAI_REALTIME_URL, {
@@ -2637,25 +2689,39 @@ app.post('/webhooks/vendor-call', (req, res) => {
     return;
   }
   
+  // Generate a unique session ID for this vendor call
+  const sessionId = crypto.randomUUID();
+  
+  // Store the vendor call data in memory
+  vendorCallSessions.set(sessionId, {
+    ticketId: ticketId as string | null,
+    vendorId: vendorId as string | null,
+    category: category as string | null,
+    description: description as string | null,
+    address: address as string | null,
+    unit: unit as string | null,
+    window: window as string | null,
+  });
+  
+  console.log('📞 [VENDOR-CALL] Stored session data:', {
+    sessionId,
+    ticketId,
+    vendorId,
+    category
+  });
+  
   const vr = new twilio.twiml.VoiceResponse();
   const connect = vr.connect();
   
-  // Build WebSocket URL with ticket info as query params
+  // Build WebSocket URL with session ID in the path
   // Convert https to wss for WebSocket connection
   const wsBaseUrl = process.env.BASE_URL.replace('https://', 'wss://');
-  const wsUrl = new URL(`${wsBaseUrl}/ws/vendor-media`);
-  wsUrl.searchParams.set('ticketId', ticketId as string);
-  if (vendorId) wsUrl.searchParams.set('vendorId', vendorId as string);
-  wsUrl.searchParams.set('category', category as string);
-  wsUrl.searchParams.set('description', description as string);
-  wsUrl.searchParams.set('address', address as string);
-  if (unit) wsUrl.searchParams.set('unit', unit as string);
-  wsUrl.searchParams.set('window', window as string);
+  const wsUrl = `${wsBaseUrl}/ws/vendor-media/${sessionId}`;
   
-  console.log('📞 [VENDOR-CALL] Connecting to WebSocket:', wsUrl.toString());
+  console.log('📞 [VENDOR-CALL] Connecting to WebSocket:', wsUrl);
   
   connect.stream({
-    url: wsUrl.toString(),
+    url: wsUrl,
     track: 'inbound_track'
   });
   
