@@ -797,6 +797,30 @@ app.get('/metrics', async (req, res) => {
   }
 });
 
+// --- Voice: inbound call handler (TwiML) ---
+app.post('/webhooks/call', async (req, res) => {
+  const { From, To, CallSid } = req.body;
+
+
+  const vr = new twilio.twiml.VoiceResponse();
+  // Simple greeting; for now just confirm we received the call
+  vr.say({ voice: 'alice' }, 'Thanks for calling the maintenance line. This call is registered. Goodbye.');
+  // (Later you can Gather DTMF or hand to your AI voice agent here)
+
+  res.type('text/xml').send(vr.toString());
+});
+
+// --- Voice: status callback to track call lifecycle ---
+app.post('/webhooks/call-status', async (req, res) => {
+  // Twilio sends events like queued, ringing, in-progress, completed
+  const { CallSid, CallStatus, From, To, Timestamp } = req.body;
+
+
+
+  res.sendStatus(204);
+});
+
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 API server running on http://localhost:${PORT}`);
