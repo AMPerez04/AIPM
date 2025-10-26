@@ -202,18 +202,18 @@ export default function CallLogList() {
     fetchVendors();
   }, []);
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this call log?")) {
-      try {
-        // TODO: Replace with actual API call
-        // await callLogsApi.delete(id);
-        setCallLogs(callLogs.filter((c) => c.id !== id));
-      } catch (err) {
-        console.error("Failed to delete call log:", err);
-        alert("Failed to delete call log. Please try again.");
-      }
-    }
-  };
+  // const handleDelete = async (id: string) => {
+  //   if (confirm("Are you sure you want to delete this call log?")) {
+  //     try {
+  //       // TODO: Replace with actual API call
+  //       // await callLogsApi.delete(id);
+  //       setCallLogs(callLogs.filter((c) => c.id !== id));
+  //     } catch (err) {
+  //       console.error("Failed to delete call log:", err);
+  //       alert("Failed to delete call log. Please try again.");
+  //     }
+  //   }
+  // };
 
   const handleSave = async (callLogData: Omit<CallLog, "id" | "createdAt" | "updatedAt">) => {
     try {
@@ -318,7 +318,7 @@ export default function CallLogList() {
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900">Call Logs</h2>
-          <button
+          {/* <button
             onClick={() => {
               setEditingCallLog(null);
               setShowForm(true);
@@ -329,7 +329,7 @@ export default function CallLogList() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
             </svg>
             <span>Add Call Log</span>
-          </button>
+          </button> */}
         </div>
 
         <div className="flex items-center space-x-4">
@@ -463,7 +463,7 @@ export default function CallLogList() {
                 </div>
                 
                 <div className="flex flex-col space-y-2 ml-4">
-                  <button
+                  {/* <button
                     onClick={() => {
                       setEditingCallLog(callLog);
                       setShowForm(true);
@@ -477,7 +477,7 @@ export default function CallLogList() {
                     className="px-3 py-1 text-red-600 hover:text-red-800 text-sm font-medium hover:bg-red-50 rounded transition-colors"
                   >
                     Delete
-                  </button>
+                  </button> */}
                 </div>
               </div>
             </motion.div>
