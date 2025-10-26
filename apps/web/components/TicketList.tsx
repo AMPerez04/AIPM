@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import TicketCard from "./TicketCard";
 import { ticketsApi } from "@/lib/api";
 

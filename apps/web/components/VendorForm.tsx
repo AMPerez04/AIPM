@@ -46,8 +46,8 @@ export default function VendorForm({ vendor, onClose, onSave }: VendorFormProps)
         hours: vendor.hours,
         priority: vendor.priority,
         notes: vendor.notes,
-        spendingLimit: (vendor as any).spendingLimit || 0,
-        rating: (vendor as any).rating || 0,
+        spendingLimit: (vendor as unknown as { spendingLimit?: number }).spendingLimit || 0,
+        rating: (vendor as unknown as { rating?: number }).rating || 0,
       });
     }
   }, [vendor]);

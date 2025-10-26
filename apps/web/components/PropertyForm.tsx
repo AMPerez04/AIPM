@@ -107,7 +107,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
             </label>
             <select
               value={formData.propertyType}
-              onChange={(e) => setFormData({ ...formData, propertyType: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, propertyType: e.target.value as "apartment" | "house" | "condo" | "townhouse" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
@@ -124,7 +124,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
             </label>
             <select
               value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value as "active" | "inactive" | "maintenance" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
@@ -254,7 +254,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
                 </label>
                 <select
                   value={newRule.ruleType}
-                  onChange={(e) => setNewRule({ ...newRule, ruleType: e.target.value as any })}
+                  onChange={(e) => setNewRule({ ...newRule, ruleType: e.target.value as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction" })}
                   className="w-full px-4 py-2 border rounded-lg text-gray-900"
                 >
                   <option value="spending_limit">Spending Limit</option>

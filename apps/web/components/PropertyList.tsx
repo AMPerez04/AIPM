@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import PropertyForm from "./PropertyForm";
 import { Property } from "@/types";
 import { propertiesApi } from "@/lib/api";

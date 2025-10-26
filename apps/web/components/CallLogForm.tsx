@@ -154,7 +154,7 @@ export default function CallLogForm({ callLog, onClose, onSave, properties, vend
             </label>
             <select
               value={formData.callType}
-              onChange={(e) => setFormData({ ...formData, callType: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, callType: e.target.value as "inbound" | "outbound" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
@@ -169,7 +169,7 @@ export default function CallLogForm({ callLog, onClose, onSave, properties, vend
             </label>
             <select
               value={formData.callStatus}
-              onChange={(e) => setFormData({ ...formData, callStatus: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, callStatus: e.target.value as "completed" | "missed" | "voicemail" | "busy" | "failed" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
