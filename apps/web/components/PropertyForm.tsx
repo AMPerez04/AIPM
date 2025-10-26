@@ -13,19 +13,19 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
   const [formData, setFormData] = useState({
     address: "",
     unit: "",
-    propertyType: "apartment" as const,
+    propertyType: "apartment" as "apartment" | "house" | "condo" | "townhouse",
     bedrooms: 0,
     bathrooms: 0,
     squareFootage: 0,
     rent: 0,
-    status: "active" as const,
+    status: "active" as "active" | "inactive" | "maintenance",
     notes: "",
     tenantId: "",
   });
 
   const [rules, setRules] = useState<PropertyRule[]>([]);
   const [newRule, setNewRule] = useState({
-    ruleType: "spending_limit" as const,
+    ruleType: "spending_limit" as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction",
     description: "",
     value: 0,
     isActive: true,
@@ -310,7 +310,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
                     };
                     setRules([...rules, rule]);
                     setNewRule({
-                      ruleType: "spending_limit",
+                      ruleType: "spending_limit" as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction",
                       description: "",
                       value: 0,
                       isActive: true,
