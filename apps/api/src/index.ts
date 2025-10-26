@@ -1750,6 +1750,86 @@ app.get('/tickets/:id', async (req, res) => {
   }
 });
 
+// GET /tickets/:id/timeline - Get ticket timeline from audit logs
+app.get('/tickets/:id/timeline', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // First, get the ticket to ensure it exists
+    const ticket = await prisma.ticket.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Get audit logs for this ticket
+    const auditLogs = await prisma.auditLog.findMany({
+      where: { ticketId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Get appointments for this ticket
+    const appointments = await prisma.appointment.findMany({
+      where: { ticketId: id },
+      include: { vendor: true },
+      orderBy: { startsAt: 'asc' },
+    });
+
+    // Build timeline events
+    const timeline = [];
+
+    // Add audit log events
+    for (const log of auditLogs) {
+      timeline.push({
+        id: log.id,
+        type: 'audit',
+        action: log.action,
+        details: log.details ? JSON.parse(log.details) : null,
+        timestamp: log.createdAt,
+      });
+    }
+
+    // Add appointment events
+    for (const appointment of appointments) {
+      timeline.push({
+        id: appointment.id,
+        type: 'appointment',
+        action: 'appointment_scheduled',
+        status: appointment.status,
+        vendor: appointment.vendor.name,
+        startsAt: appointment.startsAt,
+        confirmationMethod: appointment.confirmationMethod,
+        timestamp: appointment.createdAt,
+      });
+
+      if (appointment.status === 'confirmed') {
+        timeline.push({
+          id: `conf_${appointment.id}`,
+          type: 'appointment',
+          action: 'appointment_confirmed',
+          status: appointment.status,
+          vendor: appointment.vendor.name,
+          startsAt: appointment.startsAt,
+          timestamp: appointment.updatedAt,
+        });
+      }
+    }
+
+    // Sort by timestamp
+    timeline.sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    res.json({ ticketId: id, events: timeline });
+  } catch (error) {
+    console.error('Error fetching ticket timeline:', error);
+    res.status(500).json({ error: 'Failed to fetch ticket timeline' });
+  }
+});
+
 // GET /tickets - List tickets (with optional filtering)
 app.get('/tickets', async (req, res) => {
   try {
