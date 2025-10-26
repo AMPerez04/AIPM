@@ -18,10 +18,9 @@ export function useTickets() {
   const fetchTickets = async () => {
     try {
       setLoading(true);
-      // TODO: Call actual API
-      // const data = await ticketsApi.getRecent();
-      // setTickets(data);
-      setTickets([]);
+      setError(null);
+      const data = await ticketsApi.getRecent();
+      setTickets(data);
     } catch (err) {
       setError("Failed to fetch tickets");
       console.error(err);
@@ -47,10 +46,9 @@ export function useTicket(id: string) {
   const fetchTicket = async () => {
     try {
       setLoading(true);
-      // TODO: Call actual API
-      // const data = await ticketsApi.getById(id);
-      // setTicket(data);
-      setTicket(null);
+      setError(null);
+      const data = await ticketsApi.getById(id);
+      setTicket(data);
     } catch (err) {
       setError("Failed to fetch ticket");
       console.error(err);
@@ -76,10 +74,9 @@ export function useTicketTimeline(id: string) {
   const fetchTimeline = async () => {
     try {
       setLoading(true);
-      // TODO: Call actual API
-      // const data = await ticketsApi.getTimeline(id);
-      // setTimeline(data);
-      setTimeline([]);
+      setError(null);
+      const data = await ticketsApi.getTimeline(id);
+      setTimeline(data);
     } catch (err) {
       setError("Failed to fetch timeline");
       console.error(err);

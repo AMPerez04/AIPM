@@ -138,18 +138,12 @@ export default function HomePage() {
               <br />
               <span className="font-semibold">Fewer interruptions for owners, faster fixes for tenants.</span>
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <div className="flex justify-center">
               <Link 
                 href="/"
                 className="bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-100 transition-colors"
               >
                 View Dashboard
-              </Link>
-              <Link 
-                href="/conversation"
-                className="border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition-colors"
-              >
-                See AI in Action
               </Link>
             </div>
           </div>
@@ -505,18 +499,12 @@ export default function HomePage() {
             <p className="text-xl mb-8 text-blue-200">
               Join property owners who&apos;ve already eliminated the hassle of tenant calls
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <div className="flex justify-center">
               <Link 
                 href="/"
                 className="bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-100 transition-colors"
               >
                 Access Dashboard
-              </Link>
-              <Link 
-                href="/conversation"
-                className="border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition-colors"
-              >
-                See AI in Action
               </Link>
             </div>
           </div>
@@ -528,7 +516,7 @@ export default function HomePage() {
         <div className="container mx-auto px-4">
           <div className="text-center">
             <p className="text-gray-300">
-              © 2024 AI Property Manager. Streamlining property management for independent owners.
+              Properly - Streamlining property management for owners.
             </p>
           </div>
         </div>

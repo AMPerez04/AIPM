@@ -144,5 +144,13 @@ export const notifyApi = {
   },
 };
 
+export const metricsApi = {
+  // GET /metrics
+  getMetrics: async () => {
+    const response = await api.get("/metrics");
+    return response.data;
+  },
+};
+
 export default api;
 
