@@ -1426,6 +1426,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
               }
             }));
 
+            
             if (!audioStreamingInProgress && streamSid) {
               hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
               sendTwilioMark(hangupMarkName);
