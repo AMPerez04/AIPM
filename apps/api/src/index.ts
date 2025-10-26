@@ -1572,6 +1572,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
               }
             }));
 
+            
             if (!audioStreamingInProgress && streamSid) {
               hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
               sendTwilioMark(hangupMarkName);
@@ -1893,6 +1894,86 @@ app.get('/tickets/:id', async (req, res) => {
   }
 });
 
+// GET /tickets/:id/timeline - Get ticket timeline from audit logs
+app.get('/tickets/:id/timeline', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // First, get the ticket to ensure it exists
+    const ticket = await prisma.ticket.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Get audit logs for this ticket
+    const auditLogs = await prisma.auditLog.findMany({
+      where: { ticketId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Get appointments for this ticket
+    const appointments = await prisma.appointment.findMany({
+      where: { ticketId: id },
+      include: { vendor: true },
+      orderBy: { startsAt: 'asc' },
+    });
+
+    // Build timeline events
+    const timeline = [];
+
+    // Add audit log events
+    for (const log of auditLogs) {
+      timeline.push({
+        id: log.id,
+        type: 'audit',
+        action: log.action,
+        details: log.details ? JSON.parse(log.details) : null,
+        timestamp: log.createdAt,
+      });
+    }
+
+    // Add appointment events
+    for (const appointment of appointments) {
+      timeline.push({
+        id: appointment.id,
+        type: 'appointment',
+        action: 'appointment_scheduled',
+        status: appointment.status,
+        vendor: appointment.vendor.name,
+        startsAt: appointment.startsAt,
+        confirmationMethod: appointment.confirmationMethod,
+        timestamp: appointment.createdAt,
+      });
+
+      if (appointment.status === 'confirmed') {
+        timeline.push({
+          id: `conf_${appointment.id}`,
+          type: 'appointment',
+          action: 'appointment_confirmed',
+          status: appointment.status,
+          vendor: appointment.vendor.name,
+          startsAt: appointment.startsAt,
+          timestamp: appointment.updatedAt,
+        });
+      }
+    }
+
+    // Sort by timestamp
+    timeline.sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    res.json({ ticketId: id, events: timeline });
+  } catch (error) {
+    console.error('Error fetching ticket timeline:', error);
+    res.status(500).json({ error: 'Failed to fetch ticket timeline' });
+  }
+});
+
 // GET /tickets - List tickets (with optional filtering)
 app.get('/tickets', async (req, res) => {
   try {
@@ -2043,6 +2124,47 @@ app.post('/vendors', async (req, res) => {
       res.status(400).json({ error: 'Invalid request data', details: error.errors });
     } else {
       res.status(500).json({ error: 'Failed to create vendor' });
+    }
+  }
+});
+
+app.put('/vendors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateVendorSchema = z.object({
+      name: z.string().optional(),
+      phones: z.array(z.string()).optional(),
+      specialties: z.array(TicketCategorySchema).optional(),
+      hours: z.string().optional(),
+      priority: z.number().optional(),
+      notes: z.string().optional(),
+    });
+
+    const data = updateVendorSchema.parse(req.body);
+
+    const updateData: any = {};
+    if (data.name) updateData.name = data.name;
+    if (data.hours) updateData.hours = data.hours;
+    if (data.priority !== undefined) updateData.priority = data.priority;
+    if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.phones) updateData.phones = JSON.stringify(data.phones);
+    if (data.specialties) updateData.specialties = JSON.stringify(data.specialties);
+
+    const vendor = await prisma.vendor.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json({
+      id: vendor.id,
+      message: 'Vendor updated successfully',
+    });
+  } catch (error) {
+    console.error('Error updating vendor:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to update vendor' });
     }
   }
 });

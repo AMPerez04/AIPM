@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import CallLogForm from "./CallLogForm";
 import { CallLog, Property, Vendor } from "@/types";
 
@@ -437,7 +437,7 @@ export default function CallLogList() {
                   {callLog.transcription && (
                     <div className="text-sm text-gray-800 mb-2 bg-gray-50 p-3 rounded">
                       <span className="font-medium">Transcription:</span>
-                      <p className="mt-1 italic">"{callLog.transcription}"</p>
+                      <p className="mt-1 italic">&quot;{callLog.transcription}&quot;</p>
                     </div>
                   )}
 

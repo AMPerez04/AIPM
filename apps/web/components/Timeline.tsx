@@ -11,6 +11,15 @@ interface TimelineEvent {
   metadata?: Record<string, unknown>;
 }
 
+interface ApiTimelineEvent {
+  id: string;
+  type: string;
+  action?: string;
+  details?: Record<string, unknown>;
+  timestamp: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface TimelineProps {
   ticketId: string;
 }
@@ -25,7 +34,32 @@ export default function Timeline({ ticketId }: TimelineProps) {
       setLoading(true);
       setError(null);
       const data = await ticketsApi.getTimeline(ticketId);
-      setEvents(data);
+      
+      // Transform API events to component format
+      const transformedEvents = (data.events || []).map((event: ApiTimelineEvent) => {
+        let description = 'Unknown event';
+        
+        // Create description from action and details
+        if (event.action === 'vendor_contacted' && event.details) {
+          description = `Contacted ${event.details.vendorName || 'vendor'} via ${event.details.method || 'phone'}`;
+        } else if (event.action === 'appointment_scheduled' && event.details) {
+          description = `Scheduled appointment with ${event.details.vendor || 'vendor'}`;
+        } else if (event.action === 'appointment_confirmed' && event.details) {
+          description = `Confirmed appointment with ${event.details.vendor || 'vendor'}`;
+        } else if (event.action) {
+          description = event.action.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+        }
+        
+        return {
+          id: event.id,
+          type: event.type,
+          timestamp: event.timestamp,
+          description,
+          metadata: event.details || event.metadata,
+        };
+      });
+      
+      setEvents(transformedEvents);
     } catch (err) {
       console.error("Failed to fetch timeline:", err);
       setError("Failed to load timeline. Please try again.");
@@ -99,6 +133,10 @@ export default function Timeline({ ticketId }: TimelineProps) {
         return "📅";
       case "status_change":
         return "🔄";
+      case "audit":
+        return "📋";
+      case "appointment":
+        return "📅";
       default:
         return "📝";
     }
@@ -120,6 +158,10 @@ export default function Timeline({ ticketId }: TimelineProps) {
         return "bg-green-100 text-green-800";
       case "status_change":
         return "bg-gray-100 text-gray-800";
+      case "audit":
+        return "bg-blue-100 text-blue-800";
+      case "appointment":
+        return "bg-green-100 text-green-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -161,12 +203,13 @@ export default function Timeline({ ticketId }: TimelineProps) {
           <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200"></div>
           
           {events.map((event) => (
+            
             <div key={event.id} className="relative flex items-start space-x-4 pb-6">
               {/* Event icon */}
               <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${getEventColor(event.type)}`}>
                 {getEventIcon(event.type)}
               </div>
-              
+
               {/* Event content */}
               <div className="flex-1 min-w-0">
                 <div className="bg-gray-50 rounded-lg p-4">

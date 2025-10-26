@@ -13,19 +13,19 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
   const [formData, setFormData] = useState({
     address: "",
     unit: "",
-    propertyType: "apartment" as const,
+    propertyType: "apartment" as "apartment" | "house" | "condo" | "townhouse",
     bedrooms: 0,
     bathrooms: 0,
     squareFootage: 0,
     rent: 0,
-    status: "active" as const,
+    status: "active" as "active" | "inactive" | "maintenance",
     notes: "",
     tenantId: "",
   });
 
   const [rules, setRules] = useState<PropertyRule[]>([]);
   const [newRule, setNewRule] = useState({
-    ruleType: "spending_limit" as const,
+    ruleType: "spending_limit" as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction",
     description: "",
     value: 0,
     isActive: true,
@@ -107,7 +107,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
             </label>
             <select
               value={formData.propertyType}
-              onChange={(e) => setFormData({ ...formData, propertyType: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, propertyType: e.target.value as "apartment" | "house" | "condo" | "townhouse" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
@@ -124,7 +124,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
             </label>
             <select
               value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value as "active" | "inactive" | "maintenance" })}
               className="w-full px-4 py-2 border rounded-lg text-gray-900"
               required
             >
@@ -254,7 +254,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
                 </label>
                 <select
                   value={newRule.ruleType}
-                  onChange={(e) => setNewRule({ ...newRule, ruleType: e.target.value as any })}
+                  onChange={(e) => setNewRule({ ...newRule, ruleType: e.target.value as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction" })}
                   className="w-full px-4 py-2 border rounded-lg text-gray-900"
                 >
                   <option value="spending_limit">Spending Limit</option>
@@ -310,7 +310,7 @@ export default function PropertyForm({ property, onClose, onSave }: PropertyForm
                     };
                     setRules([...rules, rule]);
                     setNewRule({
-                      ruleType: "spending_limit",
+                      ruleType: "spending_limit" as "spending_limit" | "approval_required" | "vendor_restriction" | "time_restriction",
                       description: "",
                       value: 0,
                       isActive: true,
