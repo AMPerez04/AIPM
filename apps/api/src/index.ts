@@ -1285,7 +1285,7 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
       console.log('📞 [VENDOR] Extracted session ID from path:', sessionId);
       
       // Look up vendor call data from session store
-      const sessionData = vendorCallSessions.get(sessionId);
+      const sessionData = sessionId ? vendorCallSessions.get(sessionId) : undefined;
       if (sessionData) {
         ticketId = sessionData.ticketId;
         vendorId = sessionData.vendorId;
