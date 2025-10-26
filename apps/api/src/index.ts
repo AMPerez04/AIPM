@@ -1904,6 +1904,47 @@ app.post('/vendors', async (req, res) => {
   }
 });
 
+app.put('/vendors/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateVendorSchema = z.object({
+      name: z.string().optional(),
+      phones: z.array(z.string()).optional(),
+      specialties: z.array(TicketCategorySchema).optional(),
+      hours: z.string().optional(),
+      priority: z.number().optional(),
+      notes: z.string().optional(),
+    });
+
+    const data = updateVendorSchema.parse(req.body);
+
+    const updateData: any = {};
+    if (data.name) updateData.name = data.name;
+    if (data.hours) updateData.hours = data.hours;
+    if (data.priority !== undefined) updateData.priority = data.priority;
+    if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.phones) updateData.phones = JSON.stringify(data.phones);
+    if (data.specialties) updateData.specialties = JSON.stringify(data.specialties);
+
+    const vendor = await prisma.vendor.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json({
+      id: vendor.id,
+      message: 'Vendor updated successfully',
+    });
+  } catch (error) {
+    console.error('Error updating vendor:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Invalid request data', details: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to update vendor' });
+    }
+  }
+});
+
 app.delete('/vendors/:id', async (req, res) => {
   try {
     const { id } = req.params;
