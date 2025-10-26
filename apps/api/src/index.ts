@@ -2937,7 +2937,7 @@ app.post('/webhooks/vendor-response', async (req, res) => {
     vr.say('An error occurred. Goodbye.');
   }
   
-  res.type('text/xml').send(vr.toString()));
+  
 });
 
 // --- Landlord approval call (TwiML gather) ---
