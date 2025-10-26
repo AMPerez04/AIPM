@@ -13,19 +13,22 @@ export default function Header({ showDashboardLink = false, showHomeLink = false
     <header className={`${blueBackground ? 'bg-[#6366F1]' : 'bg-white'} shadow-sm border-b`}>
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
-          <Link href="/home" className="flex items-center space-x-3 ">
-            <div className="w-8 h-8 bg-[#6366F1] rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">AI</span>
+          <Link href="/home" className="flex items-center space-x-3 group">
+            <div className="relative w-10 h-10 bg-gradient-to-br from-[#EC4899] to-[#6366F1] rounded-xl flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
             </div>
-            <h1 className="text-2xl font-extrabold tracking-tight">
-            {blueBackground ? (
-              <span className="text-white">Properly</span>
-            ) : (
-              <span className="text-[#EC4899] ">
-                Properly
-                </span>
-            )}
-            </h1>
+            <div className="flex items-baseline space-x-2">
+              <h1 className="text-3xl font-black tracking-tight">
+                {blueBackground ? (
+                  <span className="bg-gradient-to-r from-white to-blue-100 bg-clip-text text-transparent">ProperlyAI</span>
+                ) : (
+                  <span className="bg-gradient-to-r from-[#EC4899] to-[#8B5CF6] bg-clip-text text-transparent">ProperlyAI</span>
+                )}
+              </h1>
+        
+            </div>
           </Link>
           
           <div className="flex items-center space-x-4">

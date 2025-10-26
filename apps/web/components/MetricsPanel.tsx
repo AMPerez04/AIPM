@@ -53,8 +53,8 @@ export default function MetricsPanel() {
   const activeRequests = metrics.tickets.open;
   const emergencyRequests = metrics.tickets.open; // TODO: Filter by severity when API supports it
   const scheduledToday = metrics.tickets.scheduled;
-  const totalProperties = 12; // TODO: Fetch from properties API
-  const avgResponseTime = 12; // TODO: Calculate from actual response times
+  const totalProperties = 9; // TODO: Fetch from properties API
+  const avgResponseTime = 3; // TODO: Calculate from actual response times
 
   return (
     <div className="bg-white rounded-lg shadow-lg border border-gray-100 p-6">
