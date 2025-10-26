@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import twilio from 'twilio';
+import nodemailer from 'nodemailer';
 import {
   TicketSchema,
   VendorSchema,
@@ -41,6 +42,105 @@ const wss = new WebSocketServer({ noServer: true });
 const PORT = process.env.PORT || 3001;
 const prisma = new PrismaClient();
 
+// -------------------- Email (Nodemailer over SMTP) --------------------
+const mailTransport = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT ?? 587),
+  secure: String(process.env.SMTP_SECURE ?? 'false').toLowerCase() === 'true', // 465 => true, 587 => false
+  auth: (process.env.SMTP_USER && process.env.SMTP_PASS)
+    ? { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! }
+    : undefined,
+});
+const FROM_EMAIL = process.env.FROM_EMAIL || 'Properly AI <no-reply@example.com>';
+
+mailTransport.verify()
+  .then(() => console.log('📮 SMTP ready: transporter verified'))
+  .catch(err => console.error('❌ SMTP verification failed:', err));
+
+async function sendEmail(to: string, subject: string, html: string, text?: string) {
+  try {
+    await mailTransport.sendMail({
+      from: FROM_EMAIL,
+      to,
+      subject,
+      html,
+      text: text ?? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    });
+    console.log(`📧 Email sent to ${to}: ${subject}`);
+  } catch (err) {
+    console.error('❌ Email send failed:', err);
+  }
+}
+
+function tenantConfirmationEmail(opts: {
+  tenantName: string;
+  propertyAddress: string;
+  unit?: string | null;
+  category: string;
+  window: string;
+  ticketId: string;
+  landlordName?: string | null;
+}) {
+  const { tenantName, propertyAddress, unit, category, window, ticketId, landlordName } = opts;
+  const place = unit ? `${propertyAddress}, ${unit}` : propertyAddress;
+  const subject = `✅ Your maintenance appointment is confirmed (Ticket ${ticketId})`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5">
+      <p>Hi ${tenantName},</p>
+      <p>Your ${category} appointment at <b>${place}</b> is <b>approved</b> for <b>${window}</b>.</p>
+      ${landlordName ? `<p>Approved by: ${landlordName}</p>` : ''}
+      <p>We’ll send updates if anything changes.</p>
+      <p style="color:#666">Ticket: ${ticketId}</p>
+      <p>— Properly AI</p>
+    </div>`;
+  return { subject, html };
+}
+
+function tenantRejectionEmail(opts: {
+  tenantName: string;
+  propertyAddress: string;
+  unit?: string | null;
+  category: string;
+  window: string;
+  ticketId: string;
+  landlordName?: string | null;
+}) {
+  const { tenantName, propertyAddress, unit, category, window, ticketId, landlordName } = opts;
+  const place = unit ? `${propertyAddress}, ${unit}` : propertyAddress;
+  const subject = `❌ Update on your maintenance request (Ticket ${ticketId})`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5">
+      <p>Hi ${tenantName},</p>
+      <p>Your requested ${category} appointment at <b>${place}</b> for <b>${window}</b> was <b>not approved</b>${landlordName ? ` by ${landlordName}` : ''}.</p>
+      <p>We’ll reach out with alternative options shortly.</p>
+      <p style="color:#666">Ticket: ${ticketId}</p>
+      <p>— Properly AI</p>
+    </div>`;
+  return { subject, html };
+}
+
+function landlordConfirmationEmail(opts: {
+  landlordName?: string | null;
+  tenantName: string;
+  propertyAddress: string;
+  unit?: string | null;
+  category: string;
+  window: string;
+  ticketId: string;
+}) {
+  const { landlordName, tenantName, propertyAddress, unit, category, window, ticketId } = opts;
+  const place = unit ? `${propertyAddress}, ${unit}` : propertyAddress;
+  const subject = `✅ Appointment confirmed for ${tenantName} (Ticket ${ticketId})`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5">
+      <p>${landlordName ? `Hi ${landlordName},` : 'Hello,'}</p>
+      <p>You approved a ${category} appointment for <b>${tenantName}</b> at <b>${place}</b> for <b>${window}</b>.</p>
+      <p style="color:#666">Ticket: ${ticketId}</p>
+      <p>— Properly AI</p>
+    </div>`;
+  return { subject, html };
+}
+
 // Initialize Twilio client
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
@@ -76,8 +176,8 @@ const SLA_CONFIG = {
     escalationTime: 30 * 60 * 1000, // 30 minutes
   },
   routine: {
-    responseTime: 2 * 60 * 1000 * 60, // 2 hours
-    escalationTime: 4 * 60 * 1000 * 60, // 4 hours
+    responseTime: 2 * 60 * 60 * 1000, // 2 hours
+    escalationTime: 4 * 60 * 60 * 1000, // 4 hours
   },
 };
 
@@ -151,8 +251,8 @@ async function logAudit(ticketId: string, action: string, details?: any) {
   }
 }
 
-// Helper function to find or create tenant by name and phone
-async function findOrCreateTenant(name: string, phone: string, propertyId: string) {
+// Helper function to find or create tenant by name and phone (now accepts email)
+async function findOrCreateTenant(name: string, phone: string, propertyId: string, email?: string | null) {
   try {
     // Try to find existing tenant by phone
     let tenant = await prisma.tenant.findFirst({
@@ -169,13 +269,20 @@ async function findOrCreateTenant(name: string, phone: string, propertyId: strin
           firstName,
           lastName,
           phone,
-          email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
+          email: email ?? null,
           propertyId,
         },
       });
       console.log('✅ Created new tenant:', tenant.id);
     } else {
       console.log('✅ Found existing tenant:', tenant.id);
+      // Backfill email if missing and provided now
+      if (!tenant.email && email) {
+        tenant = await prisma.tenant.update({
+          where: { id: tenant.id },
+          data: { email },
+        });
+      }
     }
 
     return tenant;
@@ -437,7 +544,7 @@ async function initiateVendorCall(ticketId: string) {
       throw new Error('BASE_URL environment variable is required but not set');
     }
     
-    // Build URL with ticket info as query params
+    // Build URL with session id flow handled by /webhooks/vendor-call
     const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
     url.searchParams.set('ticketId', ticketId);
     url.searchParams.set('vendorId', bestVendor.id);
@@ -529,8 +636,8 @@ async function processVendorSelection(ticketId: string) {
     
     console.log(`📞 [VENDOR SELECTION] Updating ticket status to vendor_contacting`);
 
-    // Contact vendors in priority order
-    for (const vendor of vendors.slice(0, 3)) { // Contact top 3 vendors
+    // Contact vendors in priority order (top 3)
+    for (const vendor of vendors.slice(0, 3)) {
       const vendorPhones = JSON.parse(vendor.phones);
       console.log(`📞 [VENDOR SELECTION] Attempting to call vendor ${vendor.name} (ID: ${vendor.id})`);
       console.log(`📞 [VENDOR SELECTION] Vendor phone numbers: ${vendorPhones}`);
@@ -542,7 +649,6 @@ async function processVendorSelection(ticketId: string) {
           // Check if BASE_URL is set
           if (!process.env.BASE_URL) {
             console.error(`❌ [VENDOR SELECTION] BASE_URL environment variable is not set. Cannot make vendor calls.`);
-            console.error(`❌ [VENDOR SELECTION] Please set BASE_URL in your environment variables.`);
             await logAudit(ticketId, 'vendor_call_failed', {
               reason: 'BASE_URL not set',
               vendorId: vendor.id,
@@ -551,7 +657,7 @@ async function processVendorSelection(ticketId: string) {
             continue;
           }
           
-          // Build URL with ticket info as query params
+          // Use webhook to create session and bridge
           const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
           url.searchParams.set('ticketId', ticket.id);
           url.searchParams.set('vendorId', vendor.id);
@@ -592,6 +698,47 @@ async function processVendorSelection(ticketId: string) {
   }
 }
 
+// -------------------- Landlord approval call --------------------
+async function initiateLandlordCall(ticketId: string, vendorId?: string) {
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: { tenant: true, property: { include: { landlord: true } } },
+    });
+    if (!ticket) { console.error('initiateLandlordCall: ticket not found'); return; }
+    const landlord = ticket.property.landlord;
+    if (!landlord?.phone) { console.error('initiateLandlordCall: landlord has no phone'); return; }
+
+    if (!process.env.BASE_URL) {
+      console.error('❌ initiateLandlordCall: BASE_URL not configured');
+      return;
+    }
+
+    const url = new URL(`${process.env.BASE_URL}/webhooks/landlord-call`);
+    url.searchParams.set('ticketId', ticketId);
+    if (vendorId) url.searchParams.set('vendorId', vendorId);
+    url.searchParams.set('category', ticket.category);
+    url.searchParams.set('address', ticket.property.address);
+    url.searchParams.set('unit', ticket.property.unit || '');
+    url.searchParams.set('tenantName', `${ticket.tenant.firstName} ${ticket.tenant.lastName}`.trim());
+    url.searchParams.set('window', ticket.window);
+
+    const call = await twilioClient.calls.create({
+      to: landlord.phone,
+      from: process.env.TWILIO_PHONE_NUMBER!,
+      url: url.toString(),
+      method: 'POST',
+      statusCallback: `${process.env.BASE_URL}/webhooks/call-status`,
+      statusCallbackMethod: 'POST',
+    });
+
+    await logAudit(ticketId, 'landlord_call_initiated', { landlordId: landlord.id, callSid: call.sid });
+    console.log(`📞 Landlord call initiated ${landlord.name} (${landlord.phone}): ${call.sid}`);
+  } catch (e) {
+    console.error('Error initiating landlord call:', e);
+  }
+}
+
 // Run SLA checks every 5 minutes
 setInterval(checkSLAViolations, 5 * 60 * 1000);
 
@@ -614,9 +761,8 @@ const b64ToBuf = (b64: string) => Buffer.from(b64, 'base64');
 const bufToB64 = (buf: Buffer) => buf.toString('base64');
 
 // (Optional) Very basic mulaw↔pcm converters (good enough for demo).
-// For better quality, use a lib like `mulaw` or `@discordjs/voice`.
 function ulawToPcm16(mu: number) {
-  // μ-law decode (8-bit -> 16-bit PCM) — compact impl for demo
+  // μ-law decode (8-bit -> 16-bit PCM)
   mu = ~mu & 0xff;
   let sign = mu & 0x80;
   let exponent = (mu & 0x70) >> 4;
@@ -626,7 +772,6 @@ function ulawToPcm16(mu: number) {
   return sample; // 16-bit signed int
 }
 function pcm16ToUlaw(sample: number) {
-  // clip
   const BIAS = 0x84;
   const CLIP = 32635;
   sample = Math.max(-CLIP, Math.min(CLIP, sample));
@@ -767,6 +912,10 @@ wss.on('connection', async (twilioWs: WebSocket) => {
                   type: 'string', 
                   description: 'Tenant phone number (e.g., "+1234567890")' 
                 },
+                tenantEmail: {
+                  type: 'string',
+                  description: 'Tenant email address'
+                },
                 propertyAddress: { 
                   type: 'string', 
                   description: 'Property address (e.g., "123 Main St")' 
@@ -798,7 +947,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
                   description: 'Additional notes or context'
                 }
               },
-              required: ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window']
+              required: ['tenantName', 'tenantPhone', 'tenantEmail', 'propertyAddress', 'category', 'severity', 'description', 'window']
             }
           },
           {
@@ -833,14 +982,13 @@ wss.on('connection', async (twilioWs: WebSocket) => {
       // Handle function calls from the model
       if (evt.type === 'response.output_item.done' && evt.item?.type === 'function_call') {
         const call = evt.item;
-        // console.log('🔧 Function call received:', call.name, call.arguments);
         
         try {
           const args = JSON.parse(call.arguments || '{}');
           
           if (call.name === 'create_ticket') {
             // Validate required fields
-            const requiredFields = ['tenantName', 'tenantPhone', 'propertyAddress', 'category', 'severity', 'description', 'window'];
+            const requiredFields = ['tenantName', 'tenantPhone', 'tenantEmail', 'propertyAddress', 'category', 'severity', 'description', 'window'];
             const missingFields = requiredFields.filter(field => !args[field]);
             
             if (missingFields.length > 0) {
@@ -850,8 +998,8 @@ wss.on('connection', async (twilioWs: WebSocket) => {
             // Find or create property first
             const property = await findOrCreateProperty(args.propertyAddress, args.propertyUnit);
             
-            // Find or create tenant
-            const tenant = await findOrCreateTenant(args.tenantName, args.tenantPhone, property.id);
+            // Find or create tenant (with email)
+            const tenant = await findOrCreateTenant(args.tenantName, args.tenantPhone, property.id, args.tenantEmail);
             
             // Create ticket via Prisma
             const ticket = await prisma.ticket.create({
@@ -928,7 +1076,6 @@ wss.on('connection', async (twilioWs: WebSocket) => {
               hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
               sendTwilioMark(hangupMarkName);
               clearHangupTimer();
-              // Fallback in case we never get the mark echo
               hangupTimer = setTimeout(() => {
                 if (wantHangup) hangupNow('fallback-timeout-no-audio');
               }, 5000);
@@ -971,7 +1118,7 @@ wss.on('connection', async (twilioWs: WebSocket) => {
         if (!oaWsReady) {
           oaWsReady = true;
           
-          // Provide system instructions (your prompt)
+          // Provide system instructions (your prompt) — include email collection
           oaWs.send(JSON.stringify({
             type: 'session.update',
             session: {
@@ -980,9 +1127,9 @@ wss.on('connection', async (twilioWs: WebSocket) => {
 
 Your job is to:
 1. Answer tenant calls for maintenance requests.
-2. Collect: full name, phone number, property address, unit, description, and preferred window.
+2. Collect: full name, phone number, **email address** (confirm spelling), property address, unit, description, and preferred window.
 3. Decide severity (emergency vs routine).
-4. When you have all required info (tenantName, tenantPhone, propertyAddress, category, severity, description, window), call create_ticket.
+4. When you have all required info (tenantName, tenantPhone, tenantEmail, propertyAddress, category, severity, description, window), call create_ticket.
 5. Confirm the ticket number and next steps with the tenant.
 6. Book vendor (handled by backend), reassure the caller.
 7. After the caller confirms details and you say your short goodbye line, CALL the "end_call" tool to hang up. Do NOT keep talking after that.
@@ -1015,12 +1162,11 @@ Be professional, empathetic, and efficient. Confirm only the most important deta
         // We've sent all audio frames for this response.
         audioStreamingInProgress = false;
 
-        // If a hangup was requested, place a Twilio mark now, so we end right after playback finishes.
+        // If a hangup was requested, place a Twilio mark now
         if (wantHangup && streamSid && !hangupMarkName) {
           hangupMarkName = `hangup_${sessionId}_${Date.now()}`;
           sendTwilioMark(hangupMarkName);
           clearHangupTimer();
-          // Fallback: if Twilio never echoes the mark, end the call anyway.
           hangupTimer = setTimeout(() => {
             if (wantHangup) hangupNow('fallback-timeout-after-done');
           }, 5000);
@@ -1122,14 +1268,14 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
   console.log('📞 [VENDOR] Request URL:', req.url);
 
   // Extract vendor call data from path - format: /ws/vendor-media/{sessionId}
-  let ticketId = null;
-  let vendorId = null;
-  let category = null;
-  let description = null;
-  let address = null;
-  let unit = null;
-  let window = null;
-  let sessionId = null;
+  let ticketId: string | null = null;
+  let vendorId: string | null = null;
+  let category: string | null = null;
+  let description: string | null = null;
+  let address: string | null = null;
+  let unit: string | null = null;
+  let window: string | null = null;
+  let sessionId: string | null = null;
 
   try {
     // Extract session ID from path
@@ -1157,9 +1303,6 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
           address,
           unit
         });
-        
-        // Clean up session data after loading (optional - keep for debugging)
-        // vendorCallSessions.delete(sessionId);
       } else {
         console.error('❌ [VENDOR] No session data found for session ID:', sessionId);
       }
@@ -1373,6 +1516,9 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
 
             console.log('✅ Appointment accepted via call:', appointment.id);
 
+            // ➜ Kick off landlord approval call
+            try { await initiateLandlordCall(String(ticketId), String(vendorId || '')); } catch (e) { console.error('Landlord call failed (vendor flow):', e); }
+
             oaWs.send(JSON.stringify({
               type: 'conversation.item.create',
               item: {
@@ -1469,8 +1615,6 @@ wss.on('vendor-connection', async (twilioWs: WebSocket, req: any) => {
         
         if (!oaWsReady) {
           oaWsReady = true;
-
-     
 
           console.log('🔍 [VENDOR] Category:', category);
           console.log('🔍 [VENDOR] Address:', address);
@@ -1627,7 +1771,7 @@ Be professional, brief, and clear. If they accept, confirm the appointment time.
     shutdown();
   });
   oaWs.on('error', (e) => {
-    console.error('❌ [VENDOR] OpenAI WS error:', e);
+    console.error('❌ [VENDOR] OpenAI Realtime API error:', e);
   });
   twilioWs.on('error', (e) => {
     console.error('❌ [VENDOR] Twilio WS error:', e);
@@ -1963,7 +2107,7 @@ app.post('/vendors/:id/ping', async (req, res) => {
           return res.status(500).json({ error: 'BASE_URL environment variable is required but not set' });
         }
         
-        // Build URL with ticket info as query params
+        // Build URL with session store
         const url = new URL(`${process.env.BASE_URL}/webhooks/vendor-call`);
         url.searchParams.set('ticketId', ticket.id);
         url.searchParams.set('vendorId', vendorId);
@@ -2631,7 +2775,6 @@ app.post('/webhooks/call', (req, res) => {
   res.type('text/xml').send(vr.toString());
 });
 
-
 app.post('/webhooks/vendor-call-alt', (req, res) => {
   // Get ticket info from request params (passed when creating the call)
   const { ticketId, category, description, address, unit, window } = req.query;
@@ -2758,7 +2901,7 @@ app.post('/webhooks/vendor-response', async (req, res) => {
     
     if (Digits === '1') {
       // Vendor accepted
-      vr.say('Thank you for accepting. You should receive an SMS with the appointment details shortly.');
+      vr.say('Thank you for accepting. We will confirm with the landlord and follow up. Goodbye.');
       
       // Update ticket status
       await prisma.ticket.update({
@@ -2770,6 +2913,9 @@ app.post('/webhooks/vendor-response', async (req, res) => {
       await logAudit(ticketId as string, 'vendor_accepted_via_call', {
         digits: Digits,
       });
+
+      // Landlord approval call
+      try { await initiateLandlordCall(String(ticketId)); } catch (e) { console.error('Landlord call failed:', e); }
       
       console.log(`✅ Vendor accepted appointment for ticket ${ticketId}`);
     } else if (Digits === '2') {
@@ -2791,7 +2937,137 @@ app.post('/webhooks/vendor-response', async (req, res) => {
     vr.say('An error occurred. Goodbye.');
   }
   
+  res.type('text/xml').send(vr.toString()));
+});
+
+// --- Landlord approval call (TwiML gather) ---
+app.post('/webhooks/landlord-call', (req, res) => {
+  const { ticketId, vendorId, tenantName, category, address, unit, window } = req.query as any;
+  const vr = new twilio.twiml.VoiceResponse();
+
+  const line1 = `Hello, this is Properly AI with an approval request.`;
+  const line2 = `Tenant ${tenantName} has a ${category} appointment at ${address}${unit ? `, unit ${unit}` : ''}, requested for ${window}.`;
+  vr.say(line1);
+  vr.say(line2);
+  vr.say('Press 1 to approve this appointment. Press 2 to reject.');
+
+  if (!process.env.BASE_URL) {
+    vr.say('Configuration error. Goodbye.');
+    return res.type('text/xml').send(vr.toString());
+  }
+
+  const gather = vr.gather({
+    numDigits: 1,
+    action: `${process.env.BASE_URL}/webhooks/landlord-response?ticketId=${ticketId}&vendorId=${vendorId || ''}`,
+    method: 'POST',
+  });
+  gather.say('Please press 1 to approve or 2 to reject.');
+
+  vr.say('If no response is received, we will try again later. Goodbye.');
+  vr.hangup();
+
   res.type('text/xml').send(vr.toString());
+});
+
+// --- Landlord keypress handler → send tenant & landlord emails ---
+app.post('/webhooks/landlord-response', async (req, res) => {
+  const { ticketId } = req.query as any;
+  const { Digits } = req.body as any;
+
+  const vr = new twilio.twiml.VoiceResponse();
+  if (!ticketId) {
+    vr.say('Error: no ticket ID provided. Goodbye.');
+    return res.type('text/xml').send(vr.toString());
+  }
+
+  try {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: String(ticketId) },
+      include: { tenant: true, property: { include: { landlord: true } } },
+    });
+    if (!ticket) {
+      vr.say('Ticket not found. Goodbye.');
+      return res.type('text/xml').send(vr.toString());
+    }
+
+    const tenantEmail = ticket.tenant.email || null;
+    const tenantName = `${ticket.tenant.firstName} ${ticket.tenant.lastName}`.trim();
+    const landlordEmail = ticket.property.landlord?.email || null;
+    const landlordName = ticket.property.landlord?.name || null;
+
+    if (Digits === '1') {
+      await logAudit(String(ticketId), 'landlord_approved_via_call', { digits: Digits });
+      vr.say('Thank you. The appointment has been approved. Emails will be sent. Goodbye.');
+      res.type('text/xml').send(vr.toString());
+
+      // Fire-and-forget emails to avoid delaying Twilio response
+      (async () => {
+        if (tenantEmail) {
+          const { subject, html } = tenantConfirmationEmail({
+            tenantName,
+            propertyAddress: ticket.property.address,
+            unit: ticket.property.unit,
+            category: ticket.category,
+            window: ticket.window,
+            ticketId: ticket.id,
+            landlordName,
+          });
+          await sendEmail(tenantEmail, subject, html);
+        } else {
+          console.warn(`⚠️ Tenant has no email on record; skipping confirmation email for ticket ${ticket.id}`);
+        }
+        if (landlordEmail) {
+          const { subject, html } = landlordConfirmationEmail({
+            landlordName,
+            tenantName,
+            propertyAddress: ticket.property.address,
+            unit: ticket.property.unit,
+            category: ticket.category,
+            window: ticket.window,
+            ticketId: ticket.id,
+          });
+          await sendEmail(landlordEmail, subject, html);
+        }
+      })().catch(console.error);
+      return;
+    } else if (Digits === '2') {
+      await prisma.ticket.update({
+        where: { id: String(ticketId) },
+        data: {
+          status: 'new',
+          notes: (ticket.notes || '') + `\n[LANDLORD_REJECTED] at ${new Date().toISOString()}`,
+        },
+      });
+      await logAudit(String(ticketId), 'landlord_rejected_via_call', { digits: Digits });
+      vr.say('Thank you. The appointment was rejected. We will notify the tenant. Goodbye.');
+      res.type('text/xml').send(vr.toString());
+
+      (async () => {
+        if (tenantEmail) {
+          const { subject, html } = tenantRejectionEmail({
+            tenantName,
+            propertyAddress: ticket.property.address,
+            unit: ticket.property.unit,
+            category: ticket.category,
+            window: ticket.window,
+            ticketId: ticket.id,
+            landlordName,
+          });
+          await sendEmail(tenantEmail, subject, html);
+        } else {
+          console.warn(`⚠️ Tenant has no email on record; skipping rejection email for ticket ${ticket.id}`);
+        }
+      })().catch(console.error);
+      return;
+    } else {
+      vr.say('Invalid response. Goodbye.');
+      return res.type('text/xml').send(vr.toString());
+    }
+  } catch (error) {
+    console.error('Error handling landlord response:', error);
+    vr.say('An error occurred. Goodbye.');
+    return res.type('text/xml').send(vr.toString());
+  }
 });
 
 // --- Voice: status callback to track call lifecycle ---
